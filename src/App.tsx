@@ -18,6 +18,8 @@ import {
   parseTreeJsonFile,
   checkServerHealth,
   MAIN_TREE_ID,
+  renameTreeOnServerOrStorage,
+  deleteTreeFromServerOrStorage,
 } from './utils/fileStorage';
 import {
   CARD_WIDTH,
@@ -72,7 +74,7 @@ import { MiniMap } from './components/MiniMap';
 import { ShortcutsHelpModal } from './components/ShortcutsHelpModal';
 import { buildSpatialGrid, getVisibleItemsFromGrid } from './utils/virtualization';
 import { useAuth } from './context/AuthContext';
-import { getTreeById, saveTreeToFirestore } from './utils/firestoreTreeService';
+import { getTreeById, saveTreeToFirestore, deleteTreeFromFirestore } from './utils/firestoreTreeService';
 import { Cake, Flame, X as CloseIcon, Lock, FolderTree, Copy, Clipboard, Users, Crown, Check, Trash2, X } from 'lucide-react';
 
 
@@ -3160,6 +3162,19 @@ export default function App() {
     }
   }, [viewport, tree.connectionOverrides, showToast]);
 
+  // Cancel clipboard copying / clear buffer
+  const handleCancelCopyClipboard = useCallback(() => {
+    try {
+      localStorage.removeItem('rodovid_clipboard_buffer');
+    } catch {}
+    setClipboardCount(0);
+    showToast({
+      type: 'info',
+      title: 'Копіювання скасовано',
+      message: 'Буфер скопійованих карток очищено.',
+    });
+  }, [showToast]);
+
   // Keyboard shortcut listener for Ctrl+C / Ctrl+V / Esc
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -3313,6 +3328,92 @@ export default function App() {
     });
   };
 
+  // Handler to rename a secondary canvas (Admin only; Main tree is strictly protected)
+  const handleRenameTree = async (treeId: string, newTitle: string): Promise<boolean> => {
+    const isMain =
+      treeId === 'my-family-tree' ||
+      treeId === 'main-tree' ||
+      treeId === 'default-tree' ||
+      treeId === MAIN_TREE_ID;
+    if (isMain) {
+      showToast({
+        type: 'warning',
+        title: 'Дія заблокована',
+        message: 'Головна гілка ніколи не видаляється і не змінюється назва.',
+      });
+      return false;
+    }
+
+    const cleanTitle = newTitle.trim();
+    if (!cleanTitle) return false;
+
+    const ok = await renameTreeOnServerOrStorage(treeId, cleanTitle);
+    if (ok) {
+      if (tree.id === treeId) {
+        setTree((prev) => ({ ...prev, title: cleanTitle, updatedAt: new Date().toISOString() }));
+      }
+      showToast({
+        type: 'success',
+        title: 'Назву змінено',
+        message: `Полотно перейменовано на «${cleanTitle}».`,
+      });
+      return true;
+    } else {
+      showToast({
+        type: 'error',
+        title: 'Помилка',
+        message: 'Не вдалося перейменувати полотно.',
+      });
+      return false;
+    }
+  };
+
+  // Handler to delete a secondary canvas (Admin only; Main tree is strictly protected)
+  const handleDeleteTree = async (treeId: string, title?: string): Promise<boolean> => {
+    const isMain =
+      treeId === 'my-family-tree' ||
+      treeId === 'main-tree' ||
+      treeId === 'default-tree' ||
+      treeId === MAIN_TREE_ID;
+    if (isMain) {
+      showToast({
+        type: 'warning',
+        title: 'Дія заблокована',
+        message: 'Головна гілка ніколи не видаляється і не змінюється назва.',
+      });
+      return false;
+    }
+
+    const ok = await deleteTreeFromServerOrStorage(treeId);
+    if (currentUser) {
+      try {
+        await deleteTreeFromFirestore(treeId);
+      } catch (err) {
+        console.warn('Failed to delete tree from firestore:', err);
+      }
+    }
+
+    if (ok) {
+      showToast({
+        type: 'info',
+        title: 'Полотно видалено',
+        message: `Полотно «${title || 'Родове полотно'}» успішно видалено.`,
+      });
+      // If user was viewing the deleted canvas, return to main tree immediately
+      if (tree.id === treeId) {
+        await handleSelectTree(MAIN_TREE_ID);
+      }
+      return true;
+    } else {
+      showToast({
+        type: 'error',
+        title: 'Помилка',
+        message: 'Не вдалося видалити полотно.',
+      });
+      return false;
+    }
+  };
+
   // Export handlers
   const handleExportPng = async () => {
     try {
@@ -3363,7 +3464,9 @@ export default function App() {
         isMainTree={isMainTree}
         onReturnToMainTree={() => handleSelectTree('my-family-tree')}
         onSelectTree={handleSelectTree}
-        onLoadJsonFile={handleLoadJson}
+        onCreateNewTree={handleCreateNewTree}
+        onRenameTree={handleRenameTree}
+        onDeleteTree={handleDeleteTree}
         onExportImage={() => setIsExportModalOpen(true)}
         personCount={personCount}
         generationCount={generationCount}
@@ -4280,6 +4383,8 @@ export default function App() {
         onSelectTree={handleSelectTree}
         onCreateNewTree={handleCreateNewTree}
         onCloneTree={handleCloneTree}
+        isAdmin={isAdmin}
+        onRenameTree={handleRenameTree}
       />
 
       {/* 15. Floating Batch Selection & Clipboard Toolbar */}
@@ -4348,8 +4453,8 @@ export default function App() {
           ) : null}
 
           {clipboardCount > 0 && (
-            <>
-              {selectedPersonIds.size > 0 && <div className="h-4 w-px bg-stone-700 shrink-0" />}
+            <div className="flex items-center gap-1 shrink-0">
+              {selectedPersonIds.size > 0 && <div className="h-4 w-px bg-stone-700 shrink-0 mr-1" />}
               <button
                 onClick={handlePasteCopiedBuffer}
                 className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold flex items-center gap-1.5 transition-all cursor-pointer active:scale-95 shrink-0 shadow-2xs"
@@ -4358,7 +4463,16 @@ export default function App() {
                 <Clipboard size={14} />
                 <span>Вставити скопійовані ({clipboardCount})</span>
               </button>
-            </>
+              <button
+                type="button"
+                onClick={handleCancelCopyClipboard}
+                className="p-1.5 rounded-xl hover:bg-stone-800 text-stone-400 hover:text-white transition-colors cursor-pointer shrink-0"
+                title="Скасувати копіювання (очистити буфер)"
+                aria-label="Скасувати копіювання"
+              >
+                <CloseIcon size={15} />
+              </button>
+            </div>
           )}
         </div>
       )}

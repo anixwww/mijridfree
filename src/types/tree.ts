@@ -138,6 +138,7 @@ export interface ConnectionMeta {
   eventDate?: string; // e.g. "12.05.1925"
   eventType?: 'marriage' | 'engagement' | 'church' | 'baptism' | 'divorce' | 'cohabitation' | 'custom';
   isMainBranch?: boolean; // Головна гілка (товстіша лінія)
+  strokeWidth?: number; // Товщина лінії від 1 до 12px
   eventX?: number; // Координата X іконки події на полотні
   eventY?: number; // Координата Y іконки події на полотні
   hasNoEvent?: boolean; // Явне вимкнення/видалення події з лінії
@@ -191,6 +192,7 @@ export interface ConnectionLine {
   eventDate?: string;
   eventType?: string;
   isMainBranch?: boolean;
+  strokeWidth?: number;
   hasNoEvent?: boolean;
   notes?: string;
   midX?: number;

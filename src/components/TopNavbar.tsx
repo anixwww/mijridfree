@@ -1,8 +1,7 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
 import {
   Menu,
   X,
-  FileUp,
   Download,
   ShieldCheck,
   Eye,
@@ -10,9 +9,14 @@ import {
   Calendar,
   Heart,
   FolderTree,
-  ChevronDown,
+  Plus,
+  Pencil,
+  Trash2,
+  Crown,
+  GripVertical,
   Check,
-  RotateCcw,
+  Lock,
+  Layers,
 } from 'lucide-react';
 import { ServerStatusIndicator } from './ServerStatusIndicator';
 import { fetchServerTrees, MAIN_TREE_ID } from '../utils/fileStorage';
@@ -27,7 +31,9 @@ interface TopNavbarProps {
   isMainTree?: boolean;
   onReturnToMainTree?: () => void;
   onSelectTree?: (treeId: string) => void;
-  onLoadJsonFile?: (file: File) => void;
+  onCreateNewTree?: (title: string) => void;
+  onRenameTree?: (treeId: string, newTitle: string) => Promise<boolean>;
+  onDeleteTree?: (treeId: string, title: string) => Promise<boolean>;
   onExportImage: () => void;
   personCount: number;
   generationCount: number;
@@ -39,37 +45,38 @@ interface TopNavbarProps {
   totalReactionsCount?: number;
   isCalendarOpen?: boolean;
   onToggleCalendar?: () => void;
-  // Deprecated/kept optional for backwards compatibility
-  onProposeCard?: () => void;
-  notifications?: { id: string; type: 'new_card' | 'new_note'; personId?: string; personName: string; text: string; createdAt: string; read?: boolean }[];
+  notifications?: any[];
   onSelectNotificationPerson?: (personId: string) => void;
   onClearNotifications?: () => void;
   onOpenShortcutsModal?: () => void;
   userPersonName?: string | null;
   onOpenUserIdentity?: () => void;
+  onLoadJsonFile?: (file: File) => void;
 }
 
-interface CanvasItem {
+export interface CanvasItem {
   id: string;
   title: string;
   personCount?: number;
   isMain?: boolean;
 }
 
+const TAB_ORDER_STORAGE_KEY = 'rodovid_canvas_tab_order';
+
 export const TopNavbar: React.FC<TopNavbarProps> = ({
   isAdmin,
   onOpenAuthModal,
   onToggleAdminRole,
-  onOpenMyTrees,
   currentTreeTitle,
   currentTreeId,
   isMainTree = true,
   onReturnToMainTree,
   onSelectTree,
-  onLoadJsonFile,
+  onCreateNewTree,
+  onRenameTree,
+  onDeleteTree,
   onExportImage,
   personCount,
-  generationCount,
   onSyncServer,
   syncStatus = 'synced',
   isServerConnected = true,
@@ -79,18 +86,32 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
   isCalendarOpen,
   onToggleCalendar,
 }) => {
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [isCanvasDropdownOpen, setIsCanvasDropdownOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLDivElement>(null);
   const [canvasList, setCanvasList] = useState<CanvasItem[]>([]);
 
-  // Load list of available canvases/branches without any '+'
-  const loadCanvases = async () => {
+  // Modals inside TopNavbar for Admin canvas management
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [newCanvasTitle, setNewCanvasTitle] = useState('');
+  const [renameTarget, setRenameTarget] = useState<{ id: string; title: string } | null>(null);
+  const [renameInputTitle, setRenameInputTitle] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isRenaming, setIsRenaming] = useState(false);
+
+  // Tab drag & drop / long-press reorder state
+  const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
+  const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
+  const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isPointerDownRef = useRef(false);
+  const pointerStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  const isLongPressActiveRef = useRef(false);
+
+  // Load canvases and order them based on stored order
+  const loadCanvases = useCallback(async () => {
     const list: CanvasItem[] = [];
 
-    // 1. Always include Main Tree
+    // 1. Main tree is ALWAYS first
     list.push({
       id: MAIN_TREE_ID,
       title: 'Головне дерево',
@@ -105,7 +126,8 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
         const localList = JSON.parse(raw);
         if (Array.isArray(localList)) {
           for (const item of localList) {
-            const isMain = item.id === MAIN_TREE_ID || item.id === 'default-tree' || item.id === 'main-tree';
+            const isMain =
+              item.id === MAIN_TREE_ID || item.id === 'default-tree' || item.id === 'main-tree';
             if (!isMain && !list.some((c) => c.id === item.id)) {
               list.push({
                 id: item.id,
@@ -124,7 +146,8 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
       const serverTrees = await fetchServerTrees();
       if (Array.isArray(serverTrees)) {
         for (const st of serverTrees) {
-          const isMain = st.id === MAIN_TREE_ID || st.id === 'default-tree' || st.id === 'main-tree';
+          const isMain =
+            st.id === MAIN_TREE_ID || st.id === 'default-tree' || st.id === 'main-tree';
           if (!isMain && !list.some((c) => c.id === st.id)) {
             list.push({
               id: st.id,
@@ -147,21 +170,40 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
       });
     }
 
+    // 5. Apply custom tab order from localStorage
+    try {
+      const rawOrder = localStorage.getItem(TAB_ORDER_STORAGE_KEY);
+      if (rawOrder) {
+        const orderedIds: string[] = JSON.parse(rawOrder);
+        if (Array.isArray(orderedIds)) {
+          const mainItem = list[0];
+          const secondary = list.slice(1);
+          secondary.sort((a, b) => {
+            const idxA = orderedIds.indexOf(a.id);
+            const idxB = orderedIds.indexOf(b.id);
+            if (idxA === -1 && idxB === -1) return 0;
+            if (idxA === -1) return 1;
+            if (idxB === -1) return -1;
+            return idxA - idxB;
+          });
+          setCanvasList([mainItem, ...secondary]);
+          return;
+        }
+      }
+    } catch {}
+
     setCanvasList(list);
-  };
+  }, [currentTreeId, currentTreeTitle, isMainTree, personCount]);
 
   useEffect(() => {
     loadCanvases();
-  }, [currentTreeTitle, isMainTree, personCount, currentTreeId]);
+  }, [loadCanvases]);
 
-  // Click outside listener for menu & canvas dropdown
+  // Click outside listener for menu
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setIsMenuOpen(false);
-      }
-      if (canvasRef.current && !canvasRef.current.contains(e.target as Node)) {
-        setIsCanvasDropdownOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -173,146 +215,328 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setIsMenuOpen(false);
-        setIsCanvasDropdownOpen(false);
+        setIsCreateModalOpen(false);
+        setRenameTarget(null);
+        setDeleteTarget(null);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  const handleImportClick = () => {
-    fileInputRef.current?.click();
+  // Handle reordering tab swap
+  const handleSwapTabs = (sourceId: string, targetId: string) => {
+    if (sourceId === targetId) return;
+    if (sourceId === MAIN_TREE_ID || targetId === MAIN_TREE_ID) {
+      // Main tree stays at index 0
+      return;
+    }
+
+    setCanvasList((prev) => {
+      const main = prev[0];
+      const rest = prev.slice(1);
+      const sourceIdx = rest.findIndex((t) => t.id === sourceId);
+      const targetIdx = rest.findIndex((t) => t.id === targetId);
+      if (sourceIdx === -1 || targetIdx === -1) return prev;
+
+      const updated = [...rest];
+      const [moved] = updated.splice(sourceIdx, 1);
+      updated.splice(targetIdx, 0, moved);
+
+      const finalList = [main, ...updated];
+      try {
+        localStorage.setItem(
+          TAB_ORDER_STORAGE_KEY,
+          JSON.stringify(updated.map((t) => t.id))
+        );
+      } catch {}
+      return finalList;
+    });
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file && onLoadJsonFile) {
-      onLoadJsonFile(file);
-      setIsMenuOpen(false);
+  // Mouse long-press & drag handlers
+  const handleTabMouseDown = (tabId: string, e: React.MouseEvent) => {
+    // Only secondary tabs can be reordered
+    if (tabId === MAIN_TREE_ID) return;
+    // Don't trigger if clicked on buttons or input
+    if ((e.target as HTMLElement).closest('button, input')) return;
+
+    isPointerDownRef.current = true;
+    pointerStartPosRef.current = { x: e.clientX, y: e.clientY };
+    isLongPressActiveRef.current = false;
+
+    // Start timer for long-press reorder mode (180ms)
+    longPressTimerRef.current = setTimeout(() => {
+      if (isPointerDownRef.current) {
+        isLongPressActiveRef.current = true;
+        setDraggedTabId(tabId);
+      }
+    }, 180);
+  };
+
+  const handleTabMouseMove = (tabId: string, e: React.MouseEvent) => {
+    if (!isPointerDownRef.current || !pointerStartPosRef.current) return;
+    const dx = Math.abs(e.clientX - pointerStartPosRef.current.x);
+    const dy = Math.abs(e.clientY - pointerStartPosRef.current.y);
+
+    if ((dx > 6 || dy > 6) && !isLongPressActiveRef.current && tabId !== MAIN_TREE_ID) {
+      if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+      isLongPressActiveRef.current = true;
+      setDraggedTabId(tabId);
     }
-    e.target.value = '';
+
+    if (draggedTabId && tabId !== MAIN_TREE_ID && tabId !== draggedTabId) {
+      setDragOverTabId(tabId);
+    }
+  };
+
+  const handleGlobalMouseUp = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    if (draggedTabId && dragOverTabId && dragOverTabId !== MAIN_TREE_ID) {
+      handleSwapTabs(draggedTabId, dragOverTabId);
+    }
+    setDraggedTabId(null);
+    setDragOverTabId(null);
+    isPointerDownRef.current = false;
+    pointerStartPosRef.current = null;
+    isLongPressActiveRef.current = false;
+  }, [draggedTabId, dragOverTabId]);
+
+  useEffect(() => {
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+    return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
+  }, [handleGlobalMouseUp]);
+
+  // Native HTML5 drag and drop support
+  const handleDragStart = (tabId: string, e: React.DragEvent) => {
+    if (tabId === MAIN_TREE_ID) {
+      e.preventDefault();
+      return;
+    }
+    setDraggedTabId(tabId);
+    e.dataTransfer.setData('text/plain', tabId);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (tabId: string, e: React.DragEvent) => {
+    e.preventDefault();
+    if (tabId === MAIN_TREE_ID || tabId === draggedTabId) return;
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverTabId(tabId);
+  };
+
+  const handleDrop = (targetId: string, e: React.DragEvent) => {
+    e.preventDefault();
+    const sourceId = e.dataTransfer.getData('text/plain') || draggedTabId;
+    if (sourceId && targetId && sourceId !== targetId && targetId !== MAIN_TREE_ID) {
+      handleSwapTabs(sourceId, targetId);
+    }
+    setDraggedTabId(null);
+    setDragOverTabId(null);
+  };
+
+  // Create canvas submit
+  const handleCreateCanvasSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCanvasTitle.trim() || !onCreateNewTree) return;
+    onCreateNewTree(newCanvasTitle.trim());
+    setNewCanvasTitle('');
+    setIsCreateModalOpen(false);
+  };
+
+  // Rename canvas submit
+  const handleRenameSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!renameTarget || !renameInputTitle.trim()) return;
+    if (renameTarget.id === MAIN_TREE_ID) return;
+
+    setIsRenaming(true);
+    try {
+      if (onRenameTree) {
+        await onRenameTree(renameTarget.id, renameInputTitle.trim());
+      }
+      setCanvasList((prev) =>
+        prev.map((t) => (t.id === renameTarget.id ? { ...t, title: renameInputTitle.trim() } : t))
+      );
+      setRenameTarget(null);
+    } finally {
+      setIsRenaming(false);
+    }
+  };
+
+  // Delete canvas confirm
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget || deleteTarget.id === MAIN_TREE_ID) return;
+    setIsDeleting(true);
+    try {
+      if (onDeleteTree) {
+        await onDeleteTree(deleteTarget.id, deleteTarget.title);
+      }
+      setCanvasList((prev) => prev.filter((t) => t.id !== deleteTarget.id));
+      setDeleteTarget(null);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   return (
-    <header className="relative z-40 select-none">
-      <div className="h-13 bg-white/95 backdrop-blur-xl border-b border-stone-200/80 px-3 sm:px-4 flex items-center justify-between gap-2 shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
+    <header className="relative z-40 select-none bg-stone-100/90 border-b border-stone-200/90">
+      <div className="h-13 px-2 sm:px-4 flex items-center justify-between gap-2 shadow-[0_1px_3px_rgba(0,0,0,0.03)]">
         
-        {/* Left Side: Redesigned Canvas Navigation */}
-        <div className="flex items-center gap-2 min-w-0">
-          {/* Redesigned Canvas Navigation Dropdown */}
-          <div ref={canvasRef} className="relative shrink-0">
-            <button
-              onClick={() => {
-                setIsCanvasDropdownOpen((prev) => !prev);
-                if (!isCanvasDropdownOpen) {
-                  loadCanvases();
+        {/* ================================================================ */}
+        {/* BROWSER-STYLE CANVAS TABS NAVIGATION                            */}
+        {/* ================================================================ */}
+        <div className="flex items-center gap-1 overflow-x-auto no-scrollbar flex-1 min-w-0 py-1">
+          {canvasList.map((tab) => {
+            const isMain = tab.isMain || tab.id === MAIN_TREE_ID;
+            const isSelected = isMain ? isMainTree : tab.id === currentTreeId;
+            const isBeingDragged = draggedTabId === tab.id;
+            const isDragOver = dragOverTabId === tab.id;
+
+            return (
+              <div
+                key={tab.id}
+                draggable={!isMain}
+                onDragStart={(e) => handleDragStart(tab.id, e)}
+                onDragOver={(e) => handleDragOver(tab.id, e)}
+                onDragLeave={() => setDragOverTabId(null)}
+                onDrop={(e) => handleDrop(tab.id, e)}
+                onMouseDown={(e) => handleTabMouseDown(tab.id, e)}
+                onMouseMove={(e) => handleTabMouseMove(tab.id, e)}
+                onClick={() => {
+                  if (isLongPressActiveRef.current) return;
+                  if (isMain) {
+                    if (onReturnToMainTree) onReturnToMainTree();
+                  } else if (onSelectTree) {
+                    onSelectTree(tab.id);
+                  }
+                }}
+                className={`group h-8.5 rounded-t-xl rounded-b-md flex items-center gap-1.5 px-2.5 sm:px-3 text-xs transition-all cursor-pointer select-none shrink-0 border relative ${
+                  isSelected
+                    ? 'bg-white text-stone-900 font-bold border-stone-200/95 shadow-xs border-b-white'
+                    : 'bg-stone-200/60 hover:bg-stone-200 text-stone-600 hover:text-stone-900 border-transparent hover:border-stone-300/70 font-medium'
+                } ${isBeingDragged ? 'opacity-40 scale-95 shadow-inner' : ''} ${
+                  isDragOver ? 'ring-2 ring-emerald-500 scale-102 bg-emerald-50/50' : ''
+                }`}
+                title={
+                  isMain
+                    ? 'Головне дерево (захищене: не видаляється і не перейменовується)'
+                    : `Полотно: ${tab.title}. Затисніть мишкою для переміщення вкладки.`
                 }
-              }}
-              className={`h-8 rounded-xl flex items-center gap-1.5 text-xs font-semibold transition-all cursor-pointer select-none active:scale-95 border shrink-0 ${
-                !isMainTree
-                  ? 'px-2 bg-amber-100 hover:bg-amber-200 text-amber-950 border-amber-300 shadow-2xs'
-                  : 'px-2.5 bg-stone-100 hover:bg-stone-200 text-stone-900 border-stone-200/90 shadow-2xs'
-              }`}
-              title={isMainTree ? "Навігація між полотнами родоводу" : `Поточне полотно: ${currentTreeTitle || 'Полотно'}. Натисніть для перемикання.`}
-              aria-label="Навігація між полотнами"
-              aria-expanded={isCanvasDropdownOpen}
-            >
-              <FolderTree size={13} className={!isMainTree ? "text-amber-700 shrink-0" : "text-emerald-700 shrink-0"} />
-              {isMainTree && (
-                <span className="max-w-[85px] sm:max-w-[150px] truncate font-bold text-[11.5px]">
-                  {currentTreeTitle || 'Головне дерево'}
+              >
+                {/* Drag handle / indicator icon */}
+                {!isMain && isAdmin ? (
+                  <GripVertical
+                    size={11}
+                    className="text-stone-400 group-hover:text-stone-600 cursor-grab shrink-0 -ml-1 transition-colors"
+                  />
+                ) : null}
+
+                {/* Tab Icon */}
+                {isMain ? (
+                  <Crown size={13} className="text-amber-600 fill-amber-400 shrink-0" />
+                ) : (
+                  <FolderTree
+                    size={13}
+                    className={isSelected ? 'text-emerald-700 shrink-0' : 'text-stone-500 shrink-0'}
+                  />
+                )}
+
+                {/* Tab Title */}
+                <span className="max-w-[100px] sm:max-w-[160px] truncate text-[11.5px] leading-none">
+                  {tab.title}
                 </span>
-              )}
-              <ChevronDown
-                size={11}
-                className={`text-stone-400 transition-transform ${isCanvasDropdownOpen ? 'rotate-180' : ''}`}
-              />
-            </button>
 
-            {/* Canvas Dropdown Popover */}
-            {isCanvasDropdownOpen && (
-              <div className="absolute left-0 top-10 w-64 bg-white rounded-2xl shadow-2xl border border-stone-200/90 p-2 z-50 space-y-1 animate-in fade-in zoom-in-95 duration-150">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-stone-400 px-2.5 py-1 flex items-center justify-between">
-                  <span>Полотна та гілки</span>
-                  <span className="text-stone-400 font-mono text-[10px]">{canvasList.length}</span>
-                </div>
+                {/* Person Count Badge */}
+                {tab.personCount !== undefined && tab.personCount > 0 && (
+                  <span
+                    className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full shrink-0 ${
+                      isSelected
+                        ? 'bg-stone-100 text-stone-700 font-semibold'
+                        : 'bg-stone-300/60 text-stone-600 font-normal'
+                    }`}
+                  >
+                    {tab.personCount}
+                  </span>
+                )}
 
-                <div className="max-h-60 overflow-y-auto space-y-0.5">
-                  {canvasList.map((c) => {
-                    const isSelected = isMainTree ? c.isMain : c.id === currentTreeId;
-                    return (
-                      <button
-                        key={c.id}
-                        onClick={() => {
-                          if (c.isMain && onReturnToMainTree) {
-                            onReturnToMainTree();
-                          } else if (onSelectTree) {
-                            onSelectTree(c.id);
-                          } else if (onOpenMyTrees) {
-                            onOpenMyTrees();
-                          }
-                          setIsCanvasDropdownOpen(false);
-                        }}
-                        className={`w-full px-2.5 py-2 rounded-xl flex items-center justify-between text-left transition-colors cursor-pointer ${
-                          isSelected
-                            ? 'bg-emerald-50 text-emerald-950 font-bold border border-emerald-200 shadow-2xs'
-                            : 'hover:bg-stone-100 text-stone-800'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <FolderTree size={14} className={c.isMain ? "text-amber-600 shrink-0" : "text-stone-500 shrink-0"} />
-                          <div className="min-w-0">
-                            <div className="text-xs truncate">{c.title}</div>
-                            {c.personCount !== undefined && (
-                              <div className="text-[10px] text-stone-400 font-normal">
-                                {c.personCount} осіб
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        {isSelected && <Check size={14} className="text-emerald-700 shrink-0" />}
-                      </button>
-                    );
-                  })}
-                </div>
+                {/* Admin Actions on Secondary Tabs: Rename & Delete */}
+                {!isMain && isAdmin && (
+                  <div
+                    className="flex items-center gap-0.5 ml-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {/* Rename Button */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRenameTarget({ id: tab.id, title: tab.title });
+                        setRenameInputTitle(tab.title);
+                      }}
+                      className="p-1 rounded-md text-stone-400 hover:text-stone-800 hover:bg-stone-200/80 transition-colors cursor-pointer"
+                      title="Змінити назву полотна"
+                      aria-label="Змінити назву"
+                    >
+                      <Pencil size={11} />
+                    </button>
+
+                    {/* Delete Button */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDeleteTarget({ id: tab.id, title: tab.title });
+                      }}
+                      className="p-1 rounded-md text-stone-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                      title="Видалити це полотно"
+                      aria-label="Видалити полотно"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            );
+          })}
 
-          {!isMainTree && onReturnToMainTree && (
+          {/* Plus Button: Add New Canvas Tab (Admin only) */}
+          {isAdmin && (
             <button
-              onClick={onReturnToMainTree}
-              className="h-8 px-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-medium flex items-center gap-1 transition-all cursor-pointer border border-stone-200 shrink-0"
-              title="Повернутися до Головного дерева"
+              type="button"
+              onClick={() => {
+                setNewCanvasTitle('');
+                setIsCreateModalOpen(true);
+              }}
+              className="h-8 w-8 rounded-xl bg-stone-200/60 hover:bg-emerald-600 hover:text-white text-stone-600 border border-transparent hover:border-emerald-600 flex items-center justify-center transition-all cursor-pointer active:scale-95 shrink-0 shadow-2xs"
+              title="Додати нове родове полотно (вкладку)"
+              aria-label="Додати нове полотно"
             >
-              <RotateCcw size={12} className="text-stone-600" />
-              <span className="hidden sm:inline text-[11px]">Головне</span>
+              <Plus size={15} />
             </button>
           )}
         </div>
 
-        {/* Right Side: Server Status & Redesigned Minimal Master Menu */}
-        <div className="flex items-center gap-1.5 sm:gap-2">
-          {/* Server Status Indicator */}
+        {/* ================================================================ */}
+        {/* RIGHT CONTROLS: Status indicator & Redesigned Master Menu        */}
+        {/* ================================================================ */}
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {/* Server / Cloud Status Indicator */}
           <ServerStatusIndicator
             syncStatus={syncStatus}
             isServerConnected={isServerConnected}
             onSyncServer={onSyncServer}
           />
 
-          {/* ============================================================== */}
-          {/* REDESIGNED MASTER MENU DROPDOWN                               */}
-          {/* Тільки: Зміна на Адміна\Гість, Календар, Статистика, Реакції,  */}
-          {/* Експорт та Імпорт. Усе решта прибрано.                         */}
-          {/* Для Гостей: Календар, Статистика, Експорт та Імпорт.          */}
-          {/* ============================================================== */}
+          {/* Master Menu Dropdown */}
           <div ref={menuRef} className="relative shrink-0">
             <button
               onClick={() => setIsMenuOpen((prev) => !prev)}
               className={`h-8 px-3 rounded-xl flex items-center gap-2 text-xs font-bold transition-all cursor-pointer select-none active:scale-95 shadow-xs ${
                 isMenuOpen
                   ? 'bg-stone-900 text-white'
-                  : 'bg-stone-100 hover:bg-stone-200 text-stone-900 border border-stone-200/90'
+                  : 'bg-white hover:bg-stone-50 text-stone-900 border border-stone-200/90'
               }`}
               title="Головне меню"
               aria-label="Головне меню"
@@ -322,57 +546,84 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
               <span className="font-semibold text-xs">Меню</span>
             </button>
 
-            {/* Redesigned Menu Dropdown */}
+            {/* Menu Popover */}
             {isMenuOpen && (
               <div className="fixed sm:absolute right-3 sm:right-0 top-14 sm:top-10 w-[calc(100vw-24px)] sm:w-72 max-w-sm bg-white rounded-2xl shadow-2xl border border-stone-200/90 p-2.5 z-50 space-y-2 animate-in fade-in zoom-in-95 duration-150">
                 
-                {/* 1. Зміна на Адміна \ Гість (Однокліковий перемикач) */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (isAdmin) {
-                      if (onToggleAdminRole) onToggleAdminRole();
-                    } else {
-                      onOpenAuthModal();
-                    }
-                    setIsMenuOpen(false);
-                  }}
-                  className={`w-full p-2 rounded-xl border flex items-center justify-between gap-2 transition-all cursor-pointer active:scale-98 select-none ${
+                {/* 1. REDESIGNED MODE SWITCHER (Переключення між Гостем та Адміном) */}
+                <div
+                  className={`p-2.5 rounded-2xl border transition-all select-none ${
                     isAdmin
-                      ? 'bg-emerald-500/10 hover:bg-emerald-500/20 border-emerald-500/30'
-                      : 'bg-stone-50 hover:bg-stone-100 border-stone-200/80'
+                      ? 'bg-gradient-to-r from-emerald-500/10 via-teal-500/10 to-emerald-500/15 border-emerald-500/30'
+                      : 'bg-stone-50 border-stone-200/90 hover:bg-stone-100/70'
                   }`}
-                  title={isAdmin ? 'Натисніть для переходу в Режим Гостя' : 'Натисніть для переходу в Режим Адміна'}
                 >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <div
-                      className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 transition-colors ${
-                        isAdmin ? 'bg-emerald-600 text-white' : 'bg-stone-800 text-white'
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div
+                        className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 transition-colors shadow-2xs ${
+                          isAdmin
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-stone-800 text-white'
+                        }`}
+                      >
+                        {isAdmin ? <ShieldCheck size={16} /> : <Eye size={16} />}
+                      </div>
+
+                      <div className="min-w-0 text-left">
+                        <div className="flex items-center gap-1.5 leading-none">
+                          <span className="text-[10px] font-extrabold uppercase tracking-wider text-stone-400">
+                            Режим
+                          </span>
+                          {isAdmin ? (
+                            <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-100/80 px-1.5 py-0.2 rounded-full">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                              Активно
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-stone-500 font-medium">
+                              Перегляд
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs font-bold text-stone-900 truncate mt-0.5">
+                          {isAdmin ? 'Адміністратор' : 'Гість'}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Mode Toggle Button */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isAdmin) {
+                          if (onToggleAdminRole) onToggleAdminRole();
+                        } else {
+                          onOpenAuthModal();
+                        }
+                        setIsMenuOpen(false);
+                      }}
+                      className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border shadow-2xs transition-all active:scale-95 cursor-pointer shrink-0 ${
+                        isAdmin
+                          ? 'bg-white hover:bg-emerald-50 text-emerald-800 border-emerald-300'
+                          : 'bg-stone-900 hover:bg-stone-800 text-white border-stone-800 flex items-center gap-1'
                       }`}
+                      title={isAdmin ? 'Перейти в режим гостя (тільки перегляд)' : 'Увійти в режим адміністратора'}
                     >
-                      {isAdmin ? <ShieldCheck size={15} /> : <Eye size={15} />}
-                    </div>
-                    <div className="min-w-0 text-left">
-                      <div className="text-[10px] font-bold uppercase tracking-wider text-stone-400 leading-none mb-0.5">
-                        Режим
-                      </div>
-                      <div className="text-xs font-bold text-stone-900 truncate">
-                        {isAdmin ? 'Адміністратор' : 'Гість'}
-                      </div>
-                    </div>
+                      {!isAdmin && <Lock size={12} className="text-amber-400" />}
+                      <span>{isAdmin ? 'Зміна на Гість' : 'Вхід Адміна'}</span>
+                    </button>
                   </div>
 
-                  <span className={`px-2.5 py-1.5 rounded-lg text-xs font-bold border shadow-2xs transition-colors shrink-0 ${
-                    isAdmin
-                      ? 'bg-white hover:bg-emerald-50 text-emerald-800 border-emerald-200'
-                      : 'bg-white hover:bg-stone-100 text-stone-900 border-stone-200'
-                  }`}>
-                    {isAdmin ? 'Зміна на Гість' : 'Зміна на Адміна'}
-                  </span>
-                </button>
+                  <div className="text-[10.5px] text-stone-500 mt-2 px-0.5">
+                    {isAdmin
+                      ? 'Повний доступ: редагування, полотна, зв’язки та налаштування.'
+                      : 'Режим перегляду: без можливості випадкових змін родоводу.'}
+                  </div>
+                </div>
 
-                {/* 2. Календар, Статистика, Реакції (тільки для Адміна) */}
-                <div className="space-y-0.5">
+                {/* 2. Menu Items: Календар, Статистика, Реакції, Експорт */}
+                <div className="space-y-0.5 pt-1">
                   {/* Календар */}
                   <button
                     onClick={() => {
@@ -386,7 +637,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
                     }`}
                   >
                     <Calendar size={15} className="text-stone-700 shrink-0" />
-                    <span className="flex-1 truncate">Календар</span>
+                    <span className="flex-1 truncate">Календар подій</span>
                   </button>
 
                   {/* Статистика */}
@@ -401,7 +652,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
                     <span className="flex-1 truncate">Статистика</span>
                   </button>
 
-                  {/* Реакції (Доступно ТІЛЬКИ для Адміністратора) */}
+                  {/* Реакції (тільки для Адміна) */}
                   {isAdmin && onOpenReactionsModal && (
                     <button
                       onClick={() => {
@@ -419,44 +670,18 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
                       )}
                     </button>
                   )}
-                </div>
 
-                {/* 3. Експорт та Імпорт (Доступно і для Адміна, і для Гостей) */}
-                <div className="pt-1.5 border-t border-stone-100">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-stone-400 px-2 py-0.5">
-                    Експорт та Імпорт
-                  </div>
-                  <div className="grid grid-cols-2 gap-1.5 pt-1">
-                    <button
-                      onClick={() => {
-                        onExportImage();
-                        setIsMenuOpen(false);
-                      }}
-                      className="h-9 px-2.5 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer border border-stone-200/80"
-                    >
-                      <Download size={14} className="text-stone-700" />
-                      <span>Експорт</span>
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        handleImportClick();
-                        setIsMenuOpen(false);
-                      }}
-                      className="h-9 px-2.5 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer border border-stone-200/80"
-                    >
-                      <FileUp size={14} className="text-stone-700" />
-                      <span>Імпорт</span>
-                    </button>
-                  </div>
-
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    className="hidden"
-                    accept=".json,.ged,.gedcom,.csv"
-                    onChange={handleFileChange}
-                  />
+                  {/* Експорт (такий самий як інші кнопки у меню) */}
+                  <button
+                    onClick={() => {
+                      onExportImage();
+                      setIsMenuOpen(false);
+                    }}
+                    className="w-full h-9 px-2.5 rounded-xl hover:bg-stone-100 text-stone-800 text-xs font-semibold flex items-center gap-2.5 transition-colors cursor-pointer text-left"
+                  >
+                    <Download size={15} className="text-stone-700 shrink-0" />
+                    <span className="flex-1 truncate">Експорт</span>
+                  </button>
                 </div>
 
               </div>
@@ -465,6 +690,205 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
 
         </div>
       </div>
+
+      {/* ================================================================ */}
+      {/* MODAL: Створення нового родового полотна (вкладки)                */}
+      {/* ================================================================ */}
+      {isCreateModalOpen && (
+        <div
+          className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs animate-in fade-in duration-150"
+          onClick={() => setIsCreateModalOpen(false)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl border border-stone-200 w-full max-w-sm overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 bg-gradient-to-r from-emerald-50 to-stone-50 border-b border-stone-200 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-emerald-700 text-white flex items-center justify-center shrink-0">
+                  <Plus size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-stone-900 leading-tight">
+                    Нове родове полотно
+                  </h3>
+                  <p className="text-[11px] text-stone-500">Створення окремої вкладки / гілки</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCreateModalOpen(false)}
+                className="p-1 rounded-lg text-stone-400 hover:text-stone-700 hover:bg-stone-200/50"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateCanvasSubmit} className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-stone-700 mb-1.5">
+                  Назва полотна
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  value={newCanvasTitle}
+                  onChange={(e) => setNewCanvasTitle(e.target.value)}
+                  placeholder="напр. Гілка Савчуків, Материнська лінія..."
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-stone-200 focus:outline-none focus:ring-2 focus:ring-emerald-600 bg-stone-50 focus:bg-white"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsCreateModalOpen(false)}
+                  className="px-3.5 py-2 text-xs font-medium text-stone-600 hover:bg-stone-100 rounded-xl transition-colors cursor-pointer"
+                >
+                  Скасувати
+                </button>
+                <button
+                  type="submit"
+                  disabled={!newCanvasTitle.trim()}
+                  className="px-4 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 active:scale-95 rounded-xl shadow-xs transition-all cursor-pointer"
+                >
+                  Створити полотно
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================ */}
+      {/* MODAL: Перейменування полотна (тільки другорядні)                */}
+      {/* ================================================================ */}
+      {renameTarget && (
+        <div
+          className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs animate-in fade-in duration-150"
+          onClick={() => setRenameTarget(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl border border-stone-200 w-full max-w-sm overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 bg-stone-50 border-b border-stone-200 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-stone-800 text-white flex items-center justify-center shrink-0">
+                  <Pencil size={15} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-stone-900 leading-tight">
+                    Зміна назви полотна
+                  </h3>
+                  <p className="text-[11px] text-stone-500">Вкажіть нову назву для цієї вкладки</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRenameTarget(null)}
+                className="p-1 rounded-lg text-stone-400 hover:text-stone-700 hover:bg-stone-200/50"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <form onSubmit={handleRenameSubmit} className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-stone-700 mb-1.5">
+                  Нова назва полотна
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  value={renameInputTitle}
+                  onChange={(e) => setRenameInputTitle(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-stone-200 focus:outline-none focus:ring-2 focus:ring-emerald-600 bg-stone-50 focus:bg-white"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setRenameTarget(null)}
+                  className="px-3.5 py-2 text-xs font-medium text-stone-600 hover:bg-stone-100 rounded-xl transition-colors cursor-pointer"
+                >
+                  Скасувати
+                </button>
+                <button
+                  type="submit"
+                  disabled={!renameInputTitle.trim() || isRenaming}
+                  className="px-4 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 active:scale-95 rounded-xl shadow-xs transition-all cursor-pointer"
+                >
+                  {isRenaming ? 'Збереження...' : 'Зберегти назву'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================ */}
+      {/* MODAL: Підтвердження видалення полотна                           */}
+      {/* ================================================================ */}
+      {deleteTarget && (
+        <div
+          className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs animate-in fade-in duration-150"
+          onClick={() => setDeleteTarget(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl border border-stone-200 w-full max-w-sm overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 bg-rose-50 border-b border-rose-200 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-rose-600 text-white flex items-center justify-center shrink-0">
+                  <Trash2 size={16} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-rose-950 leading-tight">
+                    Видалити родове полотно?
+                  </h3>
+                  <p className="text-[11px] text-rose-700">Цю дію неможливо буде скасувати</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDeleteTarget(null)}
+                className="p-1 rounded-lg text-rose-400 hover:text-rose-700 hover:bg-rose-100/50"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <p className="text-xs text-stone-600 leading-relaxed">
+                Ви впевнені, що хочете назавжди видалити полотно{' '}
+                <strong className="text-stone-900 font-bold">«{deleteTarget.title}»</strong>? Усі
+                особи та зв’язки на цьому полотні будуть видалені.
+              </p>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setDeleteTarget(null)}
+                  className="px-3.5 py-2 text-xs font-medium text-stone-600 hover:bg-stone-100 rounded-xl transition-colors cursor-pointer"
+                >
+                  Скасувати
+                </button>
+                <button
+                  type="button"
+                  disabled={isDeleting}
+                  onClick={handleDeleteConfirm}
+                  className="px-4 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 active:scale-95 rounded-xl shadow-xs transition-all cursor-pointer"
+                >
+                  {isDeleting ? 'Видалення...' : 'Видалити полотно'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </header>
   );
 };

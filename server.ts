@@ -466,6 +466,38 @@ async function startServer() {
     }
   });
 
+  // Rename a custom secondary tree / canvas (Main tree is strictly protected and cannot be renamed)
+  app.post('/api/tree/:id/rename', (req, res) => {
+    try {
+      const treeId = req.params.id;
+      const isMain = !treeId || treeId === 'my-family-tree' || treeId === 'main-tree' || treeId === 'default-tree';
+      if (isMain) {
+        return res.status(400).json({ success: false, error: 'Головна гілка ніколи не видаляється і не змінюється назва' });
+      }
+
+      const newTitle = req.body?.title?.trim();
+      if (!newTitle) {
+        return res.status(400).json({ success: false, error: 'Назва полотна не може бути порожньою' });
+      }
+
+      const filePath = getTreeFilePath(treeId);
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ success: false, error: 'Полотно не знайдено на сервері' });
+      }
+
+      const raw = fs.readFileSync(filePath, 'utf-8');
+      const data = JSON.parse(raw);
+      data.title = newTitle;
+      data.updatedAt = new Date().toISOString();
+      writeTreeFileAtomically(filePath, data);
+
+      return res.json({ success: true, tree: { id: treeId, title: newTitle } });
+    } catch (err) {
+      console.error(`Error renaming tree ${req.params.id}:`, err);
+      return res.status(500).json({ success: false, error: 'Failed to rename tree data' });
+    }
+  });
+
   if (!isProduction) {
     // Vite development server middleware
     const vite = await createViteServer({

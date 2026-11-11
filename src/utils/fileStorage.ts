@@ -238,6 +238,49 @@ export async function deleteTreeFromServerOrStorage(treeId: string): Promise<boo
 }
 
 /**
+ * Renames a secondary tree by ID on server and in local storage
+ * (Main tree is strictly protected and cannot be renamed)
+ */
+export async function renameTreeOnServerOrStorage(treeId: string, newTitle: string): Promise<boolean> {
+  const isMain = treeId === MAIN_TREE_ID || treeId === 'default-tree' || treeId === 'main-tree';
+  if (isMain || !newTitle.trim()) return false;
+  const cleanTitle = newTitle.trim();
+
+  // 1. Update local storage for this tree if cached
+  try {
+    const rawTree = localStorage.getItem(`rodovid_tree_${treeId}`);
+    if (rawTree) {
+      const parsed = JSON.parse(rawTree);
+      parsed.title = cleanTitle;
+      parsed.updatedAt = new Date().toISOString();
+      localStorage.setItem(`rodovid_tree_${treeId}`, JSON.stringify(parsed));
+    }
+
+    const rawIndex = localStorage.getItem('rodovid_local_trees_index');
+    if (rawIndex) {
+      const list: LocalTreeIndexItem[] = JSON.parse(rawIndex);
+      const updated = list.map((t) => (t.id === treeId ? { ...t, title: cleanTitle, updatedAt: new Date().toISOString() } : t));
+      localStorage.setItem('rodovid_local_trees_index', JSON.stringify(updated));
+    }
+  } catch (err) {
+    console.warn('Failed to update renamed tree in local storage:', err);
+  }
+
+  // 2. Call server endpoint
+  try {
+    const res = await fetch(`/api/tree/${encodeURIComponent(treeId)}/rename`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ title: cleanTitle }),
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn('Failed to rename tree on server:', err);
+    return false;
+  }
+}
+
+/**
  * Synchronous loader for initial render fallback
  */
 export function loadTreeFromLocalStorage(): FamilyTreeData | null {

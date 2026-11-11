@@ -30,6 +30,13 @@ export const EditConnectionModal: React.FC<EditConnectionModalProps> = ({
       : isCurrentlyVerified
   );
 
+  // Line thickness in px (1-12 px)
+  const [strokeWidth, setStrokeWidth] = useState<number>(
+    typeof initialMeta?.strokeWidth === 'number' && initialMeta.strokeWidth >= 1 && initialMeta.strokeWidth <= 12
+      ? initialMeta.strokeWidth
+      : 2
+  );
+
   useEffect(() => {
     if (isOpen) {
       setIsVerified(
@@ -38,6 +45,11 @@ export const EditConnectionModal: React.FC<EditConnectionModalProps> = ({
           : initialMeta?.confidenceLevel === 'hypothetical'
           ? false
           : isCurrentlyVerified
+      );
+      setStrokeWidth(
+        typeof initialMeta?.strokeWidth === 'number' && initialMeta.strokeWidth >= 1 && initialMeta.strokeWidth <= 12
+          ? initialMeta.strokeWidth
+          : 2
       );
     }
   }, [isOpen, initialMeta, isCurrentlyVerified]);
@@ -48,8 +60,10 @@ export const EditConnectionModal: React.FC<EditConnectionModalProps> = ({
     e.preventDefault();
 
     const updatedMeta: ConnectionMeta = {
+      ...(initialMeta || {}),
       verified: isVerified,
       confidenceLevel: isVerified ? 'verified' : 'hypothetical',
+      strokeWidth: Math.max(1, Math.min(12, Math.round(strokeWidth))),
       hasNoEvent: true,
       eventType: undefined,
       eventDate: undefined,
@@ -156,6 +170,70 @@ export const EditConnectionModal: React.FC<EditConnectionModalProps> = ({
               </p>
             </div>
           </button>
+
+          {/* Section: Line Thickness (1-12 px) */}
+          <div className="pt-2 border-t border-stone-200/80 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-stone-700 uppercase tracking-wider">
+                Товщина лінії
+              </span>
+              <span className="text-xs font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md font-mono">
+                {strokeWidth} px
+              </span>
+            </div>
+
+            {/* Slider */}
+            <div className="flex items-center gap-3">
+              <span className="text-[11px] text-stone-400 font-mono">1</span>
+              <input
+                type="range"
+                min={1}
+                max={12}
+                step={1}
+                value={strokeWidth}
+                onChange={(e) => setStrokeWidth(Number(e.target.value))}
+                className="w-full accent-emerald-700 cursor-pointer h-2 bg-stone-200 rounded-lg"
+              />
+              <span className="text-[11px] text-stone-400 font-mono">12</span>
+            </div>
+
+            {/* Presets */}
+            <div className="flex items-center justify-between gap-1 flex-wrap">
+              {[1, 2, 3, 4, 6, 8, 10, 12].map((w) => (
+                <button
+                  key={w}
+                  type="button"
+                  onClick={() => setStrokeWidth(w)}
+                  className={`px-2 py-1 rounded-lg text-[11px] font-mono font-semibold transition-all cursor-pointer border ${
+                    strokeWidth === w
+                      ? 'bg-emerald-700 text-white border-emerald-700 shadow-2xs'
+                      : 'bg-stone-50 hover:bg-stone-100 text-stone-700 border-stone-200'
+                  }`}
+                >
+                  {w}px
+                </button>
+              ))}
+            </div>
+
+            {/* Live Line Preview */}
+            <div className="p-2.5 bg-stone-100/80 rounded-xl border border-stone-200 flex flex-col items-center justify-center gap-1">
+              <div className="text-[10px] text-stone-400 uppercase font-semibold tracking-wider">
+                Попередній перегляд лінії
+              </div>
+              <svg className="w-full h-8 overflow-visible">
+                <line
+                  x1="12"
+                  y1="16"
+                  x2="260"
+                  y2="16"
+                  stroke={!isVerified ? '#94a3b8' : '#475569'}
+                  strokeWidth={strokeWidth}
+                  strokeDasharray={!isVerified ? '6,5' : undefined}
+                  strokeLinecap="round"
+                />
+              </svg>
+            </div>
+          </div>
 
           {/* Actions Footer */}
           <div className="pt-2 flex items-center justify-end gap-2">

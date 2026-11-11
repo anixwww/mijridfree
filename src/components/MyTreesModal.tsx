@@ -13,6 +13,7 @@ import {
   Crown,
   Search,
   RotateCcw,
+  Pencil,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -35,6 +36,8 @@ interface MyTreesModalProps {
   onSelectTree: (treeId: string) => void;
   onCreateNewTree: (title: string) => void;
   onCloneTree?: (treeId: string) => void;
+  isAdmin?: boolean;
+  onRenameTree?: (treeId: string, newTitle: string) => Promise<boolean>;
 }
 
 export const MyTreesModal: React.FC<MyTreesModalProps> = ({
@@ -45,6 +48,8 @@ export const MyTreesModal: React.FC<MyTreesModalProps> = ({
   onSelectTree,
   onCreateNewTree,
   onCloneTree,
+  isAdmin = false,
+  onRenameTree,
 }) => {
   const { currentUser, signInWithGoogle } = useAuth();
   const [trees, setTrees] = useState<TreeMetaItem[]>([]);
@@ -444,15 +449,32 @@ export const MyTreesModal: React.FC<MyTreesModalProps> = ({
                             </button>
                           )}
 
-                          {!isMain && (
-                            <button
-                              type="button"
-                              onClick={() => handleDelete(t.id, t.title)}
-                              className="p-1.5 text-stone-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
-                              title="Видалити це другорядне полотно"
-                            >
-                              <Trash2 size={14} />
-                            </button>
+                          {!isMain && isAdmin && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const prompted = window.prompt('Введіть нову назву для цього полотна:', t.title);
+                                  if (prompted && prompted.trim() && onRenameTree) {
+                                    await onRenameTree(t.id, prompted.trim());
+                                    await fetchTrees();
+                                  }
+                                }}
+                                className="p-1.5 text-stone-400 hover:text-stone-800 rounded-lg hover:bg-stone-100 transition-colors cursor-pointer"
+                                title="Змінити назву цього полотна"
+                              >
+                                <Pencil size={14} />
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleDelete(t.id, t.title)}
+                                className="p-1.5 text-stone-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
+                                title="Видалити це другорядне полотно"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </>
                           )}
                         </div>
                       </div>

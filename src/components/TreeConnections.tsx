@@ -125,9 +125,16 @@ const TreeConnectionsComponent: React.FC<TreeConnectionsProps> = ({
 
         const isHighlightActive = isHovered || isLineageLine || isConnectedToHoveredPerson;
 
-        // Elegant line width scale
-        const baseStrokeWidth = conn.isMainBranch ? 3.4 : conn.isVerified ? 2.0 : 1.75;
-        const activeStrokeWidth = conn.isMainBranch ? 4.2 : 3.0;
+        // Elegant line width scale (custom 1-12px or defaults)
+        const customWidth = typeof conn.strokeWidth === 'number' && conn.strokeWidth >= 1 && conn.strokeWidth <= 12
+          ? conn.strokeWidth
+          : undefined;
+        const baseStrokeWidth = customWidth !== undefined
+          ? customWidth
+          : conn.isMainBranch ? 3.4 : conn.isVerified ? 2.0 : 1.75;
+        const activeStrokeWidth = customWidth !== undefined
+          ? Math.min(16, customWidth + 1.5)
+          : conn.isMainBranch ? 4.2 : 3.0;
         const currentStrokeWidth = isHighlightActive ? activeStrokeWidth : baseStrokeWidth;
 
         return (
