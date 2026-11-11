@@ -1,0 +1,88 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: #18181b;
+    color: #e7e5e4;
+    overflow: hidden;
+  }
+
+  body.light-theme {
+    background-color: #f7faf7;
+    color: #1f2922;
+  }
+}
+
+.font-serif-heritage {
+  font-family: 'Cormorant Garamond', Georgia, serif;
+}
+
+/* Authentic dark blueprint / graph paper grid for the family tree canvas */
+.canvas-grid-pattern {
+  background-color: #18181b;
+  background-image: 
+    linear-gradient(to right, rgba(255, 255, 255, 0.07) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.07) 1px, transparent 1px),
+    linear-gradient(to right, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+  background-size: 100px 100px, 100px 100px, 20px 20px, 20px 20px;
+}
+
+body.light-theme .canvas-grid-pattern {
+  background-color: #f8faf8;
+  background-image: 
+    linear-gradient(to right, rgba(200, 214, 203, 0.35) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(200, 214, 203, 0.35) 1px, transparent 1px),
+    linear-gradient(to right, rgba(200, 214, 203, 0.15) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(200, 214, 203, 0.15) 1px, transparent 1px);
+}
+
+/* Custom scrollbars for modals and sidebars in dark mode */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #27272a;
+}
+::-webkit-scrollbar-thumb {
+  background: #52525b;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #71717a;
+}
+
+/* Utility to hide scrollbars for smooth touch-scrolling components */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Smooth gradient wave animation inside server status indicator button */
+@keyframes statusGradientShift {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.animate-status-gradient {
+  background-size: 220% 220%;
+  animation: statusGradientShift 4s ease infinite;
+}
+
+.animate-status-gradient-fast {
+  background-size: 220% 220%;
+  animation: statusGradientShift 1.8s ease-in-out infinite;
+}
+

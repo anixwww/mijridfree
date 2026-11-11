@@ -1,0 +1,76 @@
+const TOKEN_KEY = 'rodovid_admin_token';
+const LEGACY_ROLE_KEY = 'roodovid_role';
+
+export const AUTH_EXPIRED_EVENT = 'rodovid:auth-expired';
+
+export function getAuthToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setAuthToken(token: string): void {
+  try {
+    localStorage.setItem(TOKEN_KEY, token);
+    localStorage.removeItem(LEGACY_ROLE_KEY);
+  } catch (err) {
+    console.warn('Cannot persist auth token:', err);
+  }
+}
+
+export function clearAuthToken(): void {
+  try {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(LEGACY_ROLE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function authHeaders(): Record<string, string> {
+  const token = getAuthToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+/** Drops the token and notifies the app when the server rejects it. */
+export function handleUnauthorized(): void {
+  clearAuthToken();
+  window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+}
+
+/** Checks the stored token against the server. */
+export async function verifyStoredToken(): Promise<boolean> {
+  if (!getAuthToken()) return false;
+  try {
+    const res = await fetch('/api/session', { headers: authHeaders() });
+    if (res.status === 401) {
+      clearAuthToken();
+      return false;
+    }
+    return res.ok;
+  } catch {
+    // Network problem: keep the token, the server will re-check on the next save.
+    return true;
+  }
+}
+
+/** Logs in on the server; stores the token on success. */
+export async function loginWithPassword(password: string): Promise<boolean> {
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok && data?.success && data.token) {
+      setAuthToken(data.token);
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
