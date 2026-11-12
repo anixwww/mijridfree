@@ -767,9 +767,15 @@ export default function App() {
 
         const isVersionChanged = serverVersion !== currentVersion;
         const isTimestampChanged = serverUpdated > currentUpdated;
-        const isContentChanged = JSON.stringify(syncedTree.persons) !== JSON.stringify(treeRef.current.persons);
 
-        if (isVersionChanged || isTimestampChanged || isContentChanged) {
+        // If Admin is authoring, do not overwrite if server tree is not strictly newer
+        if (isAdmin) {
+          if (!isVersionChanged && !isTimestampChanged) {
+            return;
+          }
+        }
+
+        if (isVersionChanged || isTimestampChanged) {
           setTree({
             ...syncedTree,
             persons: normalizeCoupleCoordinates(syncedTree.persons, syncedTree.connectionOverrides),
@@ -788,7 +794,7 @@ export default function App() {
     } catch (err) {
       console.warn('Sync tree check failed:', err);
     }
-  }, [showToast]);
+  }, [isAdmin, showToast]);
 
   // Periodic polling & visibility change sync for Guest mode and live updates
   useEffect(() => {
@@ -1774,6 +1780,7 @@ export default function App() {
           return {
             ...prev,
             persons: updatedPersons,
+            updatedAt: new Date().toISOString(),
           };
         });
 
@@ -1996,6 +2003,7 @@ export default function App() {
         [newId]: newPerson,
       },
       selectedPersonId: newId,
+      updatedAt: new Date().toISOString(),
     }));
     setSelectedPersonId(newId);
     setIsSidebarOpen(true);
@@ -2457,6 +2465,7 @@ export default function App() {
         persons: updatedPersons,
         connectionOverrides: connOverrides,
         selectedPersonId: newId,
+        updatedAt: new Date().toISOString(),
       };
     });
 
@@ -3058,6 +3067,7 @@ export default function App() {
         ...prev,
         persons: updated,
         selectedPersonId: prev.selectedPersonId === id ? null : prev.selectedPersonId,
+        updatedAt: new Date().toISOString(),
       };
     });
 
@@ -3122,6 +3132,7 @@ export default function App() {
       return {
         ...prev,
         persons,
+        updatedAt: new Date().toISOString(),
       };
     });
   };
