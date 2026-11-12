@@ -1,3 +1,8 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import {
   collection,
   doc,
@@ -8,13 +13,9 @@ import {
   deleteDoc,
   query,
   where,
-  orderBy,
-  onSnapshot,
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { FamilyTreeData } from '../types/tree';
-import { handleFirestoreError, OperationType } from './firestoreErrors';
-
 
 export interface TreeMetaItem {
   id: string;
@@ -34,12 +35,11 @@ export interface TreeDocumentRecord extends TreeMetaItem {
 }
 
 /**
- * Fetch all trees owned by a user
+ * Fetch all trees owned by a user (fails gracefully if permissions restricted)
  */
 export async function getUserTrees(userId: string): Promise<TreeMetaItem[]> {
-  const treesPath = 'trees';
   try {
-    const q = query(collection(db, treesPath), where('ownerId', '==', userId));
+    const q = query(collection(db, 'trees'), where('ownerId', '==', userId));
     const snapshot = await getDocs(q);
     const trees: TreeMetaItem[] = [];
     snapshot.forEach((docSnap) => {
@@ -56,18 +56,17 @@ export async function getUserTrees(userId: string): Promise<TreeMetaItem[]> {
         updatedAt: data.updatedAt,
       });
     });
-    // Sort client-side by updatedAt descending
     return trees.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-  } catch (error) {
-    handleFirestoreError(error, OperationType.LIST, treesPath);
+  } catch (error: any) {
+    console.warn('getUserTrees Firestore warning:', error?.message || error);
+    return [];
   }
 }
 
 /**
- * Fetch a specific tree by ID with full data
+ * Fetch a specific tree by ID with full data (fails gracefully if permissions restricted)
  */
 export async function getTreeById(treeId: string): Promise<FamilyTreeData | null> {
-  const treePath = `trees/${treeId}`;
   try {
     const docRef = doc(db, 'trees', treeId);
     const snapshot = await getDoc(docRef);
@@ -80,13 +79,14 @@ export async function getTreeById(treeId: string): Promise<FamilyTreeData | null
       return parsed;
     }
     return null;
-  } catch (error) {
-    handleFirestoreError(error, OperationType.GET, treePath);
+  } catch (error: any) {
+    console.warn(`getTreeById (${treeId}) Firestore warning:`, error?.message || error);
+    return null;
   }
 }
 
 /**
- * Save or create a family tree in Firestore
+ * Save or create a family tree in Firestore (fails gracefully if permissions restricted)
  */
 export async function saveTreeToFirestore(
   treeId: string,
@@ -95,13 +95,10 @@ export async function saveTreeToFirestore(
   ownerName?: string,
   isPublic = true
 ): Promise<void> {
-
-  const treePath = `trees/${treeId}`;
   try {
     const docRef = doc(db, 'trees', treeId);
     const now = new Date().toISOString();
     
-    // Check if doc exists to preserve createdAt
     let createdAt = now;
     try {
       const existing = await getDoc(docRef);
@@ -128,34 +125,31 @@ export async function saveTreeToFirestore(
     };
 
     await setDoc(docRef, record);
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, treePath);
+  } catch (error: any) {
+    console.warn(`saveTreeToFirestore (${treeId}) warning (fallback active):`, error?.message || error);
   }
 }
 
 /**
- * Delete a family tree from Firestore
+ * Delete a family tree from Firestore (fails gracefully if permissions restricted)
  */
 export async function deleteTreeFromFirestore(treeId: string): Promise<void> {
-  const treePath = `trees/${treeId}`;
   try {
     const docRef = doc(db, 'trees', treeId);
     await deleteDoc(docRef);
-  } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, treePath);
+  } catch (error: any) {
+    console.warn(`deleteTreeFromFirestore (${treeId}) warning:`, error?.message || error);
   }
 }
 
 /**
- * Toggle public access for a tree document
+ * Toggle public access for a tree document (fails gracefully if permissions restricted)
  */
 export async function toggleTreePublicAccess(treeId: string, isPublic: boolean): Promise<void> {
-  const treePath = `trees/${treeId}`;
   try {
     const docRef = doc(db, 'trees', treeId);
     await updateDoc(docRef, { isPublic, updatedAt: new Date().toISOString() });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, treePath);
+  } catch (error: any) {
+    console.warn(`toggleTreePublicAccess (${treeId}) warning:`, error?.message || error);
   }
 }
-
