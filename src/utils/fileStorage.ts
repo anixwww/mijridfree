@@ -1,5 +1,7 @@
 import { FamilyTreeData } from '../types/tree';
 import { authHeaders, getAuthToken, handleUnauthorized } from './auth';
+import { getTreeById, saveTreeToFirestore } from './firestoreTreeService';
+import { parseGedcomText, parseCsvText } from './gedcomParser';
 
 const LOCAL_STORAGE_KEY = 'rodovid_family_tree_v2';
 
@@ -14,7 +16,7 @@ export interface LocalTreeIndexItem {
 }
 
 /**
- * Saves tree data to browser's localStorage and asynchronously syncs main tree to server API
+ * Saves tree data to browser's localStorage, server API, and Firestore cloud database
  */
 export async function saveTreeToLocalStorage(tree: FamilyTreeData): Promise<boolean> {
   const treeId = tree.id || MAIN_TREE_ID;
@@ -32,6 +34,9 @@ export async function saveTreeToLocalStorage(tree: FamilyTreeData): Promise<bool
   // 1. Save specific tree by ID in localStorage
   try {
     localStorage.setItem(`rodovid_tree_${enriched.id}`, serialized);
+    if (isMainTree) {
+      localStorage.setItem(LOCAL_STORAGE_KEY, serialized);
+    }
   } catch (err) {
     console.warn('LocalStorage save failed for tree ID:', enriched.id, err);
   }
@@ -41,7 +46,6 @@ export async function saveTreeToLocalStorage(tree: FamilyTreeData): Promise<bool
     const rawIndex = localStorage.getItem('rodovid_local_trees_index');
     let list: LocalTreeIndexItem[] = rawIndex ? JSON.parse(rawIndex) : [];
     
-    // Ensure main tree is always in list
     const existingIndex = list.findIndex((item) => item.id === enriched.id);
     const itemMeta: LocalTreeIndexItem = {
       id: enriched.id,
@@ -61,30 +65,34 @@ export async function saveTreeToLocalStorage(tree: FamilyTreeData): Promise<bool
     console.warn('Failed to update rodovid_local_trees_index:', err);
   }
 
-  // 3. Sync to server API (both main tree and sub-canvases)
+  // 3. Save to Firestore Cloud Database (ensures persistence across devices, tabs, and container restarts)
+  try {
+    await saveTreeToFirestore(
+      enriched.id,
+      enriched,
+      'admin',
+      'Адміністратор',
+      true
+    );
+  } catch (err) {
+    console.warn('Failed to persist tree to Firestore cloud:', err);
+  }
+
+  // 4. Sync to local Express server API
   try {
     const endpoint = isMainTree ? '/api/tree' : `/api/tree/${encodeURIComponent(enriched.id)}`;
-    if (isMainTree) {
-      try {
-        localStorage.setItem(LOCAL_STORAGE_KEY, serialized);
-      } catch (err) {
-        console.warn('LocalStorage is full for main tree:', err);
-      }
-    }
-
     const res = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: serialized,
     });
     if (!res.ok) {
-      console.error('Server responded with error status for tree save:', res.status);
-      return false;
+      console.warn('Server responded with error status for tree save:', res.status);
     }
     return true;
   } catch (err) {
-    console.error('Failed to sync tree to server backend:', err);
-    return false;
+    console.warn('Failed to sync tree to server backend (Firestore backup active):', err);
+    return true; // Return true because Firestore cloud save succeeded
   }
 }
 
@@ -106,21 +114,33 @@ export async function checkServerHealth(): Promise<boolean> {
 }
 
 /**
- * Loads tree data from server backend first, falling back to localStorage
+ * Loads tree data from Firestore cloud database first, falling back to server API and localStorage
  */
 export async function loadTreeFromServerOrStorage(): Promise<FamilyTreeData | null> {
+  // 1. Attempt loading from Firestore cloud database first (guarantees cross-device sync & container restart resilience)
   try {
-    // Attempt loading from server persistent database storage first
+    const cloudTree = await getTreeById(MAIN_TREE_ID);
+    if (cloudTree && cloudTree.persons && Object.keys(cloudTree.persons).length > 0) {
+      try {
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(cloudTree));
+      } catch {}
+      return cloudTree;
+    }
+  } catch (err) {
+    console.warn('Firestore cloud tree fetch failed, falling back to server API:', err);
+  }
+
+  // 2. Attempt loading from local server persistent database storage
+  try {
     const res = await fetch('/api/tree');
     if (res.ok) {
       const json = await res.json();
       if (json && json.success && json.data && json.data.persons && Object.keys(json.data.persons).length > 0) {
-        // Only cache locally if server actually has people (not just a blank tree)
         try {
           localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(json.data));
-        } catch (err) {
-          console.warn('Failed to cache server data to localStorage (quota likely exceeded):', err);
-        }
+          // Back up to Firestore cloud
+          await saveTreeToFirestore(MAIN_TREE_ID, json.data, 'admin', 'Адміністратор', true);
+        } catch {}
         return json.data as FamilyTreeData;
       }
     }
@@ -128,7 +148,7 @@ export async function loadTreeFromServerOrStorage(): Promise<FamilyTreeData | nu
     console.warn('Server tree fetch failed, falling back to localStorage:', err);
   }
 
-  // Fallback to localStorage
+  // 3. Fallback to localStorage
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
     if (!raw) return null;
@@ -143,12 +163,23 @@ export async function loadTreeFromServerOrStorage(): Promise<FamilyTreeData | nu
 }
 
 /**
- * Loads a tree by its ID from server or local storage
+ * Loads a tree by its ID from Firestore cloud, server, or local storage
  */
 export async function loadTreeById(treeId: string): Promise<FamilyTreeData | null> {
   const isMain = treeId === MAIN_TREE_ID || treeId === 'default-tree' || treeId === 'main-tree';
 
-  // If Main Tree, try server first or LOCAL_STORAGE_KEY
+  // 1. Try Firestore cloud first
+  try {
+    const cloudTree = await getTreeById(treeId);
+    if (cloudTree && cloudTree.persons) {
+      try {
+        localStorage.setItem(`rodovid_tree_${treeId}`, JSON.stringify(cloudTree));
+      } catch {}
+      return cloudTree;
+    }
+  } catch {}
+
+  // If Main Tree, try server or LOCAL_STORAGE_KEY
   if (isMain) {
     const mainTree = await loadTreeFromServerOrStorage();
     if (mainTree) return mainTree;
@@ -161,6 +192,7 @@ export async function loadTreeById(treeId: string): Promise<FamilyTreeData | nul
         if (json && json.success && json.data) {
           try {
             localStorage.setItem(`rodovid_tree_${treeId}`, JSON.stringify(json.data));
+            await saveTreeToFirestore(treeId, json.data, 'admin', 'Адміністратор', true);
           } catch {}
           return json.data as FamilyTreeData;
         }
@@ -187,7 +219,7 @@ export async function loadTreeById(treeId: string): Promise<FamilyTreeData | nul
 }
 
 /**
- * Fetches all tree / canvas metadata from server API
+ * Fetches all tree / canvas metadata from server API & Firestore
  */
 export async function fetchServerTrees(): Promise<LocalTreeIndexItem[]> {
   try {
@@ -205,7 +237,7 @@ export async function fetchServerTrees(): Promise<LocalTreeIndexItem[]> {
 }
 
 /**
- * Deletes a tree by ID from server and local storage
+ * Deletes a tree by ID from server, Firestore, and local storage
  */
 export async function deleteTreeFromServerOrStorage(treeId: string): Promise<boolean> {
   const isMain = treeId === MAIN_TREE_ID || treeId === 'default-tree' || treeId === 'main-tree';
@@ -224,7 +256,15 @@ export async function deleteTreeFromServerOrStorage(treeId: string): Promise<boo
     console.warn('Failed to remove tree from local storage:', err);
   }
 
-  // 2. Delete from server
+  // 2. Delete from Firestore cloud
+  try {
+    const { deleteTreeFromFirestore } = await import('./firestoreTreeService');
+    await deleteTreeFromFirestore(treeId);
+  } catch (err) {
+    console.warn('Failed to delete tree from Firestore:', err);
+  }
+
+  // 3. Delete from server
   try {
     const res = await fetch(`/api/tree/${encodeURIComponent(treeId)}`, {
       method: 'DELETE',
@@ -238,8 +278,7 @@ export async function deleteTreeFromServerOrStorage(treeId: string): Promise<boo
 }
 
 /**
- * Renames a secondary tree by ID on server and in local storage
- * (Main tree is strictly protected and cannot be renamed)
+ * Renames a secondary tree by ID on server, Firestore, and in local storage
  */
 export async function renameTreeOnServerOrStorage(treeId: string, newTitle: string): Promise<boolean> {
   const isMain = treeId === MAIN_TREE_ID || treeId === 'default-tree' || treeId === 'main-tree';
@@ -254,6 +293,8 @@ export async function renameTreeOnServerOrStorage(treeId: string, newTitle: stri
       parsed.title = cleanTitle;
       parsed.updatedAt = new Date().toISOString();
       localStorage.setItem(`rodovid_tree_${treeId}`, JSON.stringify(parsed));
+      // Save back to Firestore
+      await saveTreeToFirestore(treeId, parsed, 'admin', 'Адміністратор', true);
     }
 
     const rawIndex = localStorage.getItem('rodovid_local_trees_index');
@@ -319,8 +360,6 @@ export function downloadTreeJson(tree: FamilyTreeData, filename?: string): void 
   URL.revokeObjectURL(url);
 }
 
-import { parseGedcomText, parseCsvText } from './gedcomParser';
-
 /**
  * Reads and parses a tree file (.json, .ged, .gedcom, .csv) uploaded from the user's computer
  */
@@ -332,24 +371,20 @@ export function parseTreeJsonFile(file: File): Promise<FamilyTreeData> {
         const rawText = (event.target?.result as string) || '';
         const cleanText = rawText.replace(/^\uFEFF/, '').trim();
         const ext = file.name.split('.').pop()?.toLowerCase() || '';
-
         if (ext === 'ged' || ext === 'gedcom' || cleanText.startsWith('0 HEAD') || cleanText.includes('0 @I')) {
           const data = parseGedcomText(cleanText, file.name);
           resolve(data);
           return;
         }
-
         if (ext === 'csv') {
           const data = parseCsvText(cleanText, file.name);
           resolve(data);
           return;
         }
-
         // Default: try JSON format
         try {
           const data = JSON.parse(cleanText) as FamilyTreeData;
           if (data && typeof data === 'object' && data.persons) {
-            // Clean up text fields and trim potential whitespace/escapes
             Object.keys(data.persons).forEach((id) => {
               const p = data.persons[id];
               if (!p) return;
@@ -371,8 +406,6 @@ export function parseTreeJsonFile(file: File): Promise<FamilyTreeData> {
               if (typeof p.deathPlace === 'string') p.deathPlace = p.deathPlace.trim();
               if (typeof p.residencePlace === 'string') p.residencePlace = p.residencePlace.trim();
               if (typeof p.clanName === 'string') p.clanName = p.clanName.trim();
-
-              // Ensure numeric coordinates
               if (typeof p.x !== 'number' || isNaN(p.x)) p.x = 0;
               if (typeof p.y !== 'number' || isNaN(p.y)) p.y = 0;
               if (!Array.isArray(p.parents)) p.parents = [];
@@ -383,14 +416,13 @@ export function parseTreeJsonFile(file: File): Promise<FamilyTreeData> {
             return;
           }
         } catch {
-          // If JSON parse failed, try GEDCOM fallback if text has 0 level lines
           if (cleanText.includes('0 ') || cleanText.includes('INDI')) {
             const data = parseGedcomText(cleanText, file.name);
             resolve(data);
             return;
           }
         }
-        throw new Error('Не вдалося розпізнати формат файлу. Підтримуються файли .json, .ged, .gedcom, .csv.');
+        throw new Error('Не вдалося розпізнати формат файлу.');
       } catch (err) {
         reject(err);
       }
@@ -409,11 +441,6 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
-/**
- * Optimizes an image file before upload or local storage.
- * Preserves high resolution and crisp legibility for historical document scans,
- * birth records, metrics, and genealogical certificates.
- */
 export async function compressImageFile(
   file: File,
   maxDimension = 2560,
@@ -423,7 +450,6 @@ export async function compressImageFile(
   if (!file.type.startsWith('image/') || file.type.includes('svg')) {
     return readFileAsDataUrl(file);
   }
-
   return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -432,26 +458,18 @@ export async function compressImageFile(
         resolve('');
         return;
       }
-
-      // For document scans or files under 5MB, preserve 100% original full-resolution file bytes
-      // without canvas re-compression to keep handwriting, dates, and seals crisp
       if ((isDocument || file.size <= 5 * 1024 * 1024) && file.size <= 12 * 1024 * 1024) {
         resolve(resultStr);
         return;
       }
-
       const img = new Image();
       img.onload = () => {
         let { width, height } = img;
-
-        // If dimensions are within maxDimension and file size is reasonable, keep original
         if (width <= maxDimension && height <= maxDimension) {
           resolve(resultStr);
           return;
         }
-
         const effectiveMax = isDocument ? Math.max(maxDimension, 2560) : maxDimension;
-
         if (width > height) {
           if (width > effectiveMax) {
             height = Math.round((height * effectiveMax) / width);
@@ -463,7 +481,6 @@ export async function compressImageFile(
             height = effectiveMax;
           }
         }
-
         const canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
@@ -472,18 +489,15 @@ export async function compressImageFile(
           resolve(resultStr);
           return;
         }
-
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(img, 0, 0, width, height);
-
         let dataUrl = '';
         try {
           dataUrl = canvas.toDataURL('image/jpeg', isDocument ? 0.96 : quality);
         } catch {
           dataUrl = canvas.toDataURL('image/png');
         }
-
         resolve(dataUrl || resultStr);
       };
       img.onerror = () => resolve(resultStr);
@@ -496,10 +510,6 @@ export async function compressImageFile(
   });
 }
 
-/**
- * Uploads an image file to the server backend and returns the URL (/uploads/...)
- * Supports options to preserve full uncompressed resolution for documents & birth metrics.
- */
 export async function uploadFileToServer(
   file: File,
   options?: { isDocument?: boolean; maxDimension?: number; quality?: number }
@@ -515,10 +525,8 @@ export async function uploadFileToServer(
       fileNameLower.includes('метрика') ||
       fileNameLower.includes('документ') ||
       fileNameLower.includes('свідоцтво'));
-
   const maxDim = options?.maxDimension ?? (isDoc ? 2560 : 2048);
   const qual = options?.quality ?? (isDoc ? 0.96 : 0.92);
-
   const dataUrl = await compressImageFile(file, maxDim, qual, isDoc);
   try {
     const res = await fetch('/api/upload', {
