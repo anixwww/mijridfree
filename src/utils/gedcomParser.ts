@@ -316,11 +316,11 @@ export function parseCsvText(csvText: string, filename?: string): FamilyTreeData
   const lines = csvText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   if (lines.length < 2) throw new Error('CSV файл порожній або не містить колонок.');
 
-  const headers = lines[0].toLowerCase().split(/[,;\t]/).map((h) => h.replace(/["']/g, '').trim());
-  const fnIdx = headers.findIndex((h) => h.includes('first') || h.includes('ім') || h.includes('name'));
-  const lnIdx = headers.findIndex((h) => h.includes('last') || h.includes('прізвищ') || h.includes('surname'));
-  const genderIdx = headers.findIndex((h) => h.includes('gender') || h.includes('стать') || h.includes('sex'));
-  const birthIdx = headers.findIndex((h) => h.includes('birth') || h.includes('народж'));
+  const headers = lines[0].toLowerCase().split(/[,;\t]/).map((h) => (h ? h.replace(/["']/g, '').trim() : ''));
+  const fnIdx = headers.findIndex((h) => h && (h.includes('first') || h.includes('ім') || h.includes('name')));
+  const lnIdx = headers.findIndex((h) => h && (h.includes('last') || h.includes('прізвищ') || h.includes('surname')));
+  const genderIdx = headers.findIndex((h) => h && (h.includes('gender') || h.includes('стать') || h.includes('sex')));
+  const birthIdx = headers.findIndex((h) => h && (h.includes('birth') || h.includes('народж')));
 
   const persons: Record<string, Person> = {};
 
