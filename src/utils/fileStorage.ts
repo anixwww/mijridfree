@@ -1,4 +1,4 @@
-import { FamilyTreeData } from '../types/tree';
+import { FamilyTreeData, Person } from '../types/tree';
 import { authHeaders, getAuthToken, handleUnauthorized } from './auth';
 import { getTreeById, saveTreeToFirestore } from './firestoreTreeService';
 import { parseGedcomText, parseCsvText } from './gedcomParser';
@@ -217,6 +217,53 @@ export async function loadTreeById(treeId: string): Promise<FamilyTreeData | nul
   }
 
   return null;
+}
+
+/**
+ * Synchronizes targetCanvasTitle on person cards with the latest actual canvas titles
+ */
+export function syncCrossCanvasLinkTitles(
+  treeData: FamilyTreeData,
+  availableTrees: Array<{ id: string; title: string }>
+): FamilyTreeData {
+  if (!treeData || !treeData.persons || Object.keys(treeData.persons).length === 0) {
+    return treeData;
+  }
+
+  const titleMap = new Map<string, string>();
+  availableTrees.forEach((t) => {
+    if (t.id && t.title) {
+      titleMap.set(t.id, t.title);
+      if (t.id === MAIN_TREE_ID || t.id === 'main-tree' || t.id === 'default-tree') {
+        titleMap.set(MAIN_TREE_ID, t.title);
+        titleMap.set('main-tree', t.title);
+        titleMap.set('default-tree', t.title);
+      }
+    }
+  });
+
+  let changed = false;
+  const updatedPersons: Record<string, Person> = { ...treeData.persons };
+
+  Object.keys(updatedPersons).forEach((personId) => {
+    const p = updatedPersons[personId];
+    if (p && p.targetCanvasId) {
+      const latestTitle = titleMap.get(p.targetCanvasId);
+      if (latestTitle && p.targetCanvasTitle !== latestTitle) {
+        updatedPersons[personId] = {
+          ...p,
+          targetCanvasTitle: latestTitle,
+        };
+        changed = true;
+      }
+    }
+  });
+
+  if (!changed) return treeData;
+  return {
+    ...treeData,
+    persons: updatedPersons,
+  };
 }
 
 /**

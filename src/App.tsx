@@ -20,6 +20,8 @@ import {
   MAIN_TREE_ID,
   renameTreeOnServerOrStorage,
   deleteTreeFromServerOrStorage,
+  fetchServerTrees,
+  syncCrossCanvasLinkTitles,
 } from './utils/fileStorage';
 import {
   CARD_WIDTH,
@@ -132,27 +134,28 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     const sharedTreeId = params.get('tree');
 
-    if (sharedTreeId) {
-      getTreeById(sharedTreeId).then((sharedTree) => {
-        hasLoadedFromServer.current = true;
-        if (sharedTree && sharedTree.persons && Object.keys(sharedTree.persons).length > 0) {
-          setTree({
-            ...sharedTree,
-            persons: normalizeCoupleCoordinates(sharedTree.persons, sharedTree.connectionOverrides),
-          });
-        }
-      });
-    } else {
-      loadTreeFromServerOrStorage().then((serverTree) => {
-        hasLoadedFromServer.current = true;
-        if (serverTree && serverTree.persons && Object.keys(serverTree.persons).length > 0) {
-          setTree({
-            ...serverTree,
-            persons: normalizeCoupleCoordinates(serverTree.persons, serverTree.connectionOverrides),
-          });
-        }
-      });
-    }
+    const loadInitialTree = async () => {
+      const serverTrees = await fetchServerTrees();
+      let targetTree: FamilyTreeData | null = null;
+
+      if (sharedTreeId) {
+        targetTree = await getTreeById(sharedTreeId);
+      }
+      if (!targetTree) {
+        targetTree = await loadTreeFromServerOrStorage();
+      }
+
+      hasLoadedFromServer.current = true;
+      if (targetTree && targetTree.persons && Object.keys(targetTree.persons).length > 0) {
+        const syncedTree = syncCrossCanvasLinkTitles(targetTree, serverTrees);
+        setTree({
+          ...syncedTree,
+          persons: normalizeCoupleCoordinates(syncedTree.persons, syncedTree.connectionOverrides),
+        });
+      }
+    };
+
+    loadInitialTree();
   }, []);
 
 
@@ -752,21 +755,24 @@ export default function App() {
       const currentId = treeRef.current.id || MAIN_TREE_ID;
       const serverTree = await loadTreeById(currentId);
       if (serverTree && serverTree.persons && Object.keys(serverTree.persons).length > 0) {
+        const serverTreesList = await fetchServerTrees();
+        const syncedTree = syncCrossCanvasLinkTitles(serverTree, serverTreesList);
+
         const currentVersion = treeRef.current.version || 'v0.1';
         const currentUpdated = treeRef.current.updatedAt || '';
-        const serverVersion = serverTree.version || 'v0.1';
-        const serverUpdated = serverTree.updatedAt || '';
+        const serverVersion = syncedTree.version || 'v0.1';
+        const serverUpdated = syncedTree.updatedAt || '';
 
         const isVersionChanged = serverVersion !== currentVersion;
         const isTimestampChanged = serverUpdated > currentUpdated;
-        const isContentChanged = JSON.stringify(serverTree.persons) !== JSON.stringify(treeRef.current.persons);
+        const isContentChanged = JSON.stringify(syncedTree.persons) !== JSON.stringify(treeRef.current.persons);
 
         if (isVersionChanged || isTimestampChanged || isContentChanged) {
           setTree({
-            ...serverTree,
-            persons: normalizeCoupleCoordinates(serverTree.persons, serverTree.connectionOverrides),
+            ...syncedTree,
+            persons: normalizeCoupleCoordinates(syncedTree.persons, syncedTree.connectionOverrides),
           });
-          setLastSavedTime(new Date(serverTree.updatedAt || Date.now()));
+          setLastSavedTime(new Date(syncedTree.updatedAt || Date.now()));
 
           if (isGuestMode && (isVersionChanged || isTimestampChanged)) {
             showToast({
@@ -3488,8 +3494,12 @@ export default function App() {
 
   // Handler to select / switch to another canvas
   const handleSelectTree = async (treeId: string) => {
-    // Save current active tree first
-    await saveTreeToLocalStorage(tree);
+    // Save current active tree first (ONLY if Admin)
+    if (isAdmin) {
+      await saveTreeToLocalStorage(tree);
+    }
+
+    const serverTrees = await fetchServerTrees();
 
     // Try cloud or local storage
     if (currentUser) {
@@ -3497,14 +3507,21 @@ export default function App() {
         const cloudTree = await getTreeById(treeId);
         if (cloudTree) {
           hasCenteredTreeIdRef.current = null;
-          setTree(cloudTree);
-          setSelectedPersonId(cloudTree.selectedPersonId || Object.keys(cloudTree.persons)[0] || null);
+          const syncedTree = syncCrossCanvasLinkTitles(cloudTree, serverTrees);
+          const normalized = {
+            ...syncedTree,
+            persons: normalizeCoupleCoordinates(syncedTree.persons || {}, syncedTree.connectionOverrides),
+          };
+          setTree(normalized);
+          setSelectedPersonId(syncedTree.selectedPersonId || Object.keys(syncedTree.persons || {})[0] || null);
           setSelectedPersonIds(new Set());
-          saveTreeToLocalStorage(cloudTree);
+          if (isAdmin) {
+            saveTreeToLocalStorage(normalized);
+          }
           showToast({
             type: 'info',
             title: 'Полотно відкрито',
-            message: `Відкрито полотно "${cloudTree.title || 'Родинне дерево'}" (${Object.keys(cloudTree.persons || {}).length} осіб).`,
+            message: `Відкрито полотно "${syncedTree.title || 'Родинне дерево'}" (${Object.keys(syncedTree.persons || {}).length} осіб).`,
           });
           return;
         }
@@ -3516,13 +3533,18 @@ export default function App() {
     const targetTree = await loadTreeById(treeId);
     if (targetTree) {
       hasCenteredTreeIdRef.current = null;
-      setTree(targetTree);
-      setSelectedPersonId(targetTree.selectedPersonId || Object.keys(targetTree.persons)[0] || null);
+      const syncedTree = syncCrossCanvasLinkTitles(targetTree, serverTrees);
+      const normalized = {
+        ...syncedTree,
+        persons: normalizeCoupleCoordinates(syncedTree.persons || {}, syncedTree.connectionOverrides),
+      };
+      setTree(normalized);
+      setSelectedPersonId(syncedTree.selectedPersonId || Object.keys(syncedTree.persons || {})[0] || null);
       setSelectedPersonIds(new Set());
       showToast({
         type: 'info',
         title: 'Полотно відкрито',
-        message: `Відкрито полотно "${targetTree.title || 'Родинне дерево'}" (${Object.keys(targetTree.persons || {}).length} осіб).`,
+        message: `Відкрито полотно "${syncedTree.title || 'Родинне дерево'}" (${Object.keys(syncedTree.persons || {}).length} осіб).`,
       });
       return;
     }
@@ -3536,7 +3558,9 @@ export default function App() {
 
   // Handler to clone/duplicate any tree
   const handleCloneTree = async (treeId: string) => {
-    await saveTreeToLocalStorage(tree);
+    if (isAdmin) {
+      await saveTreeToLocalStorage(tree);
+    }
 
     const sourceTree = await loadTreeById(treeId);
     if (!sourceTree) return;
@@ -3583,9 +3607,32 @@ export default function App() {
 
     const ok = await renameTreeOnServerOrStorage(treeId, cleanTitle);
     if (ok) {
-      if (tree.id === treeId) {
-        setTree((prev) => ({ ...prev, title: cleanTitle, updatedAt: new Date().toISOString() }));
-      }
+      setTree((prev) => {
+        const isCurrentTarget = prev.id === treeId;
+        const updatedPersons = { ...prev.persons };
+        let hasPersonTitleChanges = false;
+
+        Object.keys(updatedPersons).forEach((pId) => {
+          const p = updatedPersons[pId];
+          if (p && p.targetCanvasId === treeId) {
+            updatedPersons[pId] = {
+              ...p,
+              targetCanvasTitle: cleanTitle,
+            };
+            hasPersonTitleChanges = true;
+          }
+        });
+
+        if (!isCurrentTarget && !hasPersonTitleChanges) return prev;
+
+        return {
+          ...prev,
+          title: isCurrentTarget ? cleanTitle : prev.title,
+          updatedAt: new Date().toISOString(),
+          persons: updatedPersons,
+        };
+      });
+
       showToast({
         type: 'success',
         title: 'Назву змінено',
