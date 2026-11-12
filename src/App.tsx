@@ -181,6 +181,8 @@ export default function App() {
     };
   }, []);
 
+
+
   // Clear any card multi-selections when switching to Guest mode
   useEffect(() => {
     if (!isAdmin) {
@@ -291,6 +293,59 @@ export default function App() {
   const dismissToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
+
+  // Secret admin login: press English 'a' 5 times consecutively
+  const aPressCountRef = useRef<number>(0);
+  const aPressTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      if (e.key.toLowerCase() === 'a') {
+        if (aPressTimerRef.current) clearTimeout(aPressTimerRef.current);
+
+        aPressCountRef.current += 1;
+
+        if (aPressCountRef.current >= 5) {
+          aPressCountRef.current = 0;
+          const nextState = !isAdmin;
+          setIsAdmin(nextState);
+          if (nextState) {
+            showToast({
+              type: 'success',
+              title: 'Секретний вхід',
+              message: 'Режим адміністратора активовано секретною комбінацією (5 разів "A").',
+            });
+          } else {
+            showToast({
+              type: 'info',
+              title: 'Секретний вихід',
+              message: 'Переведено в режим гостя.',
+            });
+          }
+        } else {
+          aPressTimerRef.current = setTimeout(() => {
+            aPressCountRef.current = 0;
+          }, 3000);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      if (aPressTimerRef.current) clearTimeout(aPressTimerRef.current);
+    };
+  }, [isAdmin, showToast]);
 
   // Clan & Lineage Readability States
   const [isLineageFocus, setIsLineageFocus] = useState<boolean>(false);

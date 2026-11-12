@@ -3,8 +3,6 @@ import {
   Menu,
   X,
   Download,
-  ShieldCheck,
-  Eye,
   BarChart3,
   Calendar,
   Heart,
@@ -15,7 +13,6 @@ import {
   Crown,
   GripVertical,
   Check,
-  Lock,
   Layers,
 } from 'lucide-react';
 import { ServerStatusIndicator } from './ServerStatusIndicator';
@@ -556,79 +553,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
             {isMenuOpen && (
               <div className="fixed sm:absolute right-3 sm:right-0 top-14 sm:top-10 w-[calc(100vw-24px)] sm:w-72 max-w-sm bg-white rounded-2xl shadow-2xl border border-stone-200/90 p-2.5 z-50 space-y-2 animate-in fade-in zoom-in-95 duration-150">
                 
-                {/* 1. REDESIGNED MODE SWITCHER (Переключення між Гостем та Адміном) */}
-                <div
-                  className={`p-2.5 rounded-2xl border transition-all select-none ${
-                    isAdmin
-                      ? 'bg-gradient-to-r from-emerald-500/10 via-teal-500/10 to-emerald-500/15 border-emerald-500/30'
-                      : 'bg-stone-50 border-stone-200/90 hover:bg-stone-100/70'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <div
-                        className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 transition-colors shadow-2xs ${
-                          isAdmin
-                            ? 'bg-emerald-600 text-white'
-                            : 'bg-stone-800 text-white'
-                        }`}
-                      >
-                        {isAdmin ? <ShieldCheck size={16} /> : <Eye size={16} />}
-                      </div>
-
-                      <div className="min-w-0 text-left">
-                        <div className="flex items-center gap-1.5 leading-none">
-                          <span className="text-[10px] font-extrabold uppercase tracking-wider text-stone-400">
-                            Режим
-                          </span>
-                          {isAdmin ? (
-                            <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-100/80 px-1.5 py-0.2 rounded-full">
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                              Активно
-                            </span>
-                          ) : (
-                            <span className="text-[10px] text-stone-500 font-medium">
-                              Перегляд
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-xs font-bold text-stone-900 truncate mt-0.5">
-                          {isAdmin ? 'Адміністратор' : 'Гість'}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Mode Toggle Button */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (isAdmin) {
-                          if (onToggleAdminRole) onToggleAdminRole();
-                        } else {
-                          onOpenAuthModal();
-                        }
-                        setIsMenuOpen(false);
-                      }}
-                      className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border shadow-2xs transition-all active:scale-95 cursor-pointer shrink-0 ${
-                        isAdmin
-                          ? 'bg-white hover:bg-emerald-50 text-emerald-800 border-emerald-300'
-                          : 'bg-stone-900 hover:bg-stone-800 text-white border-stone-800 flex items-center gap-1'
-                      }`}
-                      title={isAdmin ? 'Перейти в режим гостя (тільки перегляд)' : 'Увійти в режим адміністратора'}
-                    >
-                      {!isAdmin && <Lock size={12} className="text-amber-400" />}
-                      <span>{isAdmin ? 'Зміна на Гість' : 'Вхід Адміна'}</span>
-                    </button>
-                  </div>
-
-                  <div className="text-[10.5px] text-stone-500 mt-2 px-0.5">
-                    {isAdmin
-                      ? 'Повний доступ: редагування, полотна, зв’язки та налаштування.'
-                      : 'Режим перегляду: без можливості випадкових змін родоводу.'}
-                  </div>
-                </div>
-
-                {/* 2. Menu Items: Календар, Статистика, Реакції, Експорт */}
+                {/* Menu Items: Календар, Статистика, Реакції, Експорт */}
                 <div className="space-y-0.5 pt-1">
                   {/* Календар */}
                   <button
