@@ -35,7 +35,7 @@ export interface TreeDocumentRecord extends TreeMetaItem {
 }
 
 /**
- * Fetch all trees owned by a user (fails gracefully if permissions restricted)
+ * Fetch all trees owned by a user
  */
 export async function getUserTrees(userId: string): Promise<TreeMetaItem[]> {
   try {
@@ -57,14 +57,13 @@ export async function getUserTrees(userId: string): Promise<TreeMetaItem[]> {
       });
     });
     return trees.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-  } catch (error: any) {
-    console.warn('getUserTrees Firestore warning:', error?.message || error);
+  } catch {
     return [];
   }
 }
 
 /**
- * Fetch a specific tree by ID with full data (fails gracefully if permissions restricted)
+ * Fetch a specific tree by ID with full data
  */
 export async function getTreeById(treeId: string): Promise<FamilyTreeData | null> {
   try {
@@ -79,14 +78,13 @@ export async function getTreeById(treeId: string): Promise<FamilyTreeData | null
       return parsed;
     }
     return null;
-  } catch (error: any) {
-    console.warn(`getTreeById (${treeId}) Firestore warning:`, error?.message || error);
+  } catch {
     return null;
   }
 }
 
 /**
- * Save or create a family tree in Firestore (fails gracefully if permissions restricted)
+ * Save or create a family tree in Firestore
  */
 export async function saveTreeToFirestore(
   treeId: string,
@@ -125,31 +123,31 @@ export async function saveTreeToFirestore(
     };
 
     await setDoc(docRef, record);
-  } catch (error: any) {
-    console.warn(`saveTreeToFirestore (${treeId}) warning (fallback active):`, error?.message || error);
+  } catch {
+    // Silently catch permission or network errors so local persistence remains unaffected
   }
 }
 
 /**
- * Delete a family tree from Firestore (fails gracefully if permissions restricted)
+ * Delete a family tree from Firestore
  */
 export async function deleteTreeFromFirestore(treeId: string): Promise<void> {
   try {
     const docRef = doc(db, 'trees', treeId);
     await deleteDoc(docRef);
-  } catch (error: any) {
-    console.warn(`deleteTreeFromFirestore (${treeId}) warning:`, error?.message || error);
+  } catch {
+    // Silently catch
   }
 }
 
 /**
- * Toggle public access for a tree document (fails gracefully if permissions restricted)
+ * Toggle public access for a tree document
  */
 export async function toggleTreePublicAccess(treeId: string, isPublic: boolean): Promise<void> {
   try {
     const docRef = doc(db, 'trees', treeId);
     await updateDoc(docRef, { isPublic, updatedAt: new Date().toISOString() });
-  } catch (error: any) {
-    console.warn(`toggleTreePublicAccess (${treeId}) warning:`, error?.message || error);
+  } catch {
+    // Silently catch
   }
 }
