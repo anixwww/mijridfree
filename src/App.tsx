@@ -294,56 +294,75 @@ export default function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  // Secret admin login: press English 'a' 5 times consecutively
-  const aPressCountRef = useRef<number>(0);
-  const aPressTimerRef = useRef<NodeJS.Timeout | null>(null);
+  // Secret admin login: press English 'a' 5 times OR click 5 times rapidly
+  const secretTriggerCountRef = useRef<number>(0);
+  const secretTriggerTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
+    const handleTrigger = () => {
+      secretTriggerCountRef.current = 0;
+      const nextState = !isAdmin;
+      setIsAdmin(nextState);
+      if (nextState) {
+        showToast({
+          type: 'success',
+          title: 'Секретний вхід',
+          message: 'Режим адміністратора активовано секретною комбінацією (5 натискань).',
+        });
+      } else {
+        showToast({
+          type: 'info',
+          title: 'Секретний вихід',
+          message: 'Переведено в режим гостя.',
+        });
+      }
+    };
+
+    const handleInputOrButton = (e: Event) => {
       const target = e.target as HTMLElement;
-      if (
+      return (
         target &&
         (target.tagName === 'INPUT' ||
           target.tagName === 'TEXTAREA' ||
+          target.tagName === 'BUTTON' ||
           target.isContentEditable)
-      ) {
-        return;
-      }
+      );
+    };
 
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (handleInputOrButton(e as any)) return;
       if (e.key.toLowerCase() === 'a') {
-        if (aPressTimerRef.current) clearTimeout(aPressTimerRef.current);
-
-        aPressCountRef.current += 1;
-
-        if (aPressCountRef.current >= 5) {
-          aPressCountRef.current = 0;
-          const nextState = !isAdmin;
-          setIsAdmin(nextState);
-          if (nextState) {
-            showToast({
-              type: 'success',
-              title: 'Секретний вхід',
-              message: 'Режим адміністратора активовано секретною комбінацією (5 разів "A").',
-            });
-          } else {
-            showToast({
-              type: 'info',
-              title: 'Секретний вихід',
-              message: 'Переведено в режим гостя.',
-            });
-          }
+        if (secretTriggerTimerRef.current) clearTimeout(secretTriggerTimerRef.current);
+        secretTriggerCountRef.current += 1;
+        if (secretTriggerCountRef.current >= 5) {
+          handleTrigger();
         } else {
-          aPressTimerRef.current = setTimeout(() => {
-            aPressCountRef.current = 0;
+          secretTriggerTimerRef.current = setTimeout(() => {
+            secretTriggerCountRef.current = 0;
           }, 3000);
         }
       }
     };
 
+    const handleClick = (e: MouseEvent) => {
+      if (handleInputOrButton(e as any)) return;
+      if (secretTriggerTimerRef.current) clearTimeout(secretTriggerTimerRef.current);
+      secretTriggerCountRef.current += 1;
+      if (secretTriggerCountRef.current >= 5) {
+        handleTrigger();
+      } else {
+        secretTriggerTimerRef.current = setTimeout(() => {
+          secretTriggerCountRef.current = 0;
+        }, 1500); // Taps should be faster than keypresses
+      }
+    };
+
     window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('click', handleClick);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
-      if (aPressTimerRef.current) clearTimeout(aPressTimerRef.current);
+      window.removeEventListener('click', handleClick);
+      if (secretTriggerTimerRef.current) clearTimeout(secretTriggerTimerRef.current);
     };
   }, [isAdmin, showToast]);
 
