@@ -15,6 +15,7 @@ import {
   GripVertical,
   Check,
   Layers,
+  Tag,
 } from 'lucide-react';
 import { ServerStatusIndicator } from './ServerStatusIndicator';
 import { fetchServerTrees, MAIN_TREE_ID } from '../utils/fileStorage';
@@ -26,6 +27,8 @@ interface TopNavbarProps {
   onOpenMyTrees?: () => void;
   currentTreeTitle?: string;
   currentTreeId?: string;
+  treeVersion?: string;
+  onUpdateVersion?: (newVersion: string) => void;
   isMainTree?: boolean;
   onReturnToMainTree?: () => void;
   onSelectTree?: (treeId: string) => void;
@@ -68,6 +71,8 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
   onToggleAdminRole,
   currentTreeTitle,
   currentTreeId,
+  treeVersion = 'v0.1',
+  onUpdateVersion,
   isMainTree = true,
   onReturnToMainTree,
   onSelectTree,
@@ -91,9 +96,11 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
   const menuRef = useRef<HTMLDivElement>(null);
   const [canvasList, setCanvasList] = useState<CanvasItem[]>([]);
 
-  // Modals inside TopNavbar for Admin canvas management
+  // Modals inside TopNavbar for Admin canvas & version management
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [newCanvasTitle, setNewCanvasTitle] = useState('');
+  const [isVersionModalOpen, setIsVersionModalOpen] = useState(false);
+  const [versionInput, setVersionInput] = useState(treeVersion || 'v0.1');
   const [renameTarget, setRenameTarget] = useState<{ id: string; title: string } | null>(null);
   const [renameInputTitle, setRenameInputTitle] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
@@ -523,6 +530,31 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
         {/* RIGHT CONTROLS: Status indicator & Redesigned Master Menu        */}
         {/* ================================================================ */}
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {/* Tree Version Badge (Clickable for Admin, Read-only for Guest) */}
+          <button
+            type="button"
+            onClick={() => {
+              if (isAdmin) {
+                setVersionInput(treeVersion || 'v0.1');
+                setIsVersionModalOpen(true);
+              }
+            }}
+            className={`h-8 px-2.5 rounded-xl border flex items-center gap-1.5 text-xs font-bold transition-all select-none shadow-2xs shrink-0 ${
+              isAdmin
+                ? 'bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-300/80 cursor-pointer active:scale-95'
+                : 'bg-emerald-50 text-emerald-900 border-emerald-200/80 cursor-default'
+            }`}
+            title={
+              isAdmin
+                ? 'Вкажіть версію даного дерева (натисніть для зміни)'
+                : `Синхронізована версія дерева: ${treeVersion || 'v0.1'}`
+            }
+          >
+            <Tag size={13} className={isAdmin ? 'text-amber-700 shrink-0' : 'text-emerald-700 shrink-0'} />
+            <span className="font-mono text-[11.5px] font-bold">{treeVersion || 'v0.1'}</span>
+            {isAdmin && <Pencil size={10} className="text-amber-700/70 shrink-0" />}
+          </button>
+
           {/* Server / Cloud Status Indicator */}
           <ServerStatusIndicator
             syncStatus={syncStatus}
@@ -844,6 +876,115 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================ */}
+      {/* MODAL: Зміна версії родового дерева (для Адміністратора)         */}
+      {/* ================================================================ */}
+      {isVersionModalOpen && (
+        <div
+          className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs animate-in fade-in duration-150"
+          onClick={() => setIsVersionModalOpen(false)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl border border-stone-200 w-full max-w-sm overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 bg-gradient-to-r from-amber-50 to-stone-50 border-b border-stone-200 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-amber-600 text-white flex items-center justify-center shrink-0 shadow-2xs">
+                  <Tag size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-stone-900 leading-tight">
+                    Версія родового дерева
+                  </h3>
+                  <p className="text-[11px] text-stone-500">Маркування синхронізованої версії</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsVersionModalOpen(false)}
+                className="p-1 rounded-lg text-stone-400 hover:text-stone-700 hover:bg-stone-200/50"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (versionInput.trim() && onUpdateVersion) {
+                  onUpdateVersion(versionInput.trim());
+                }
+                setIsVersionModalOpen(false);
+              }}
+              className="p-5 space-y-4"
+            >
+              <div>
+                <label className="block text-xs font-semibold text-stone-700 mb-1.5">
+                  Номер версії (наприклад: v0.1, v0.2, v1.0)
+                </label>
+                <input
+                  type="text"
+                  value={versionInput}
+                  onChange={(e) => setVersionInput(e.target.value)}
+                  placeholder="v0.1"
+                  className="w-full px-3 py-2 text-sm font-mono font-bold rounded-xl border border-stone-300 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
+                />
+              </div>
+
+              {/* Quick Increment Buttons */}
+              <div className="flex items-center gap-2 pt-0.5">
+                <span className="text-[11px] font-semibold text-stone-500">Швидка зміна:</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const raw = (versionInput || 'v0.1').replace(/[^0-9.]/g, '');
+                    const num = parseFloat(raw) || 0.1;
+                    const next = (num + 0.1).toFixed(1);
+                    setVersionInput(`v${next}`);
+                  }}
+                  className="px-2.5 py-1 text-xs font-mono font-bold bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-lg transition-colors cursor-pointer"
+                >
+                  +0.1
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const raw = (versionInput || 'v0.1').replace(/[^0-9.]/g, '');
+                    const num = parseFloat(raw) || 0.1;
+                    const next = (Math.floor(num) + 1.0).toFixed(1);
+                    setVersionInput(`v${next}`);
+                  }}
+                  className="px-2.5 py-1 text-xs font-mono font-bold bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-lg transition-colors cursor-pointer"
+                >
+                  +1.0
+                </button>
+              </div>
+
+              <div className="p-3 rounded-xl bg-amber-50/80 border border-amber-200/80 text-[11px] text-amber-900 leading-relaxed">
+                Збережена версія буде негайно відправлена в базу даних та на сервер. Усі користувачі в режимі гостя миттєво підтягнуть її при синхронізації.
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setIsVersionModalOpen(false)}
+                  className="px-3.5 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-100 rounded-xl transition-colors cursor-pointer"
+                >
+                  Скасувати
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 active:scale-95 rounded-xl shadow-xs transition-all cursor-pointer"
+                >
+                  Зберегти та опублікувати
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

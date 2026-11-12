@@ -26,6 +26,7 @@ export async function saveTreeToLocalStorage(tree: FamilyTreeData): Promise<bool
     ...tree,
     id: isMainTree ? MAIN_TREE_ID : treeId,
     title: tree.title || (isMainTree ? 'Головне родове дерево' : 'Родове полотно'),
+    version: tree.version || 'v0.1',
     updatedAt: new Date().toISOString(),
   };
 

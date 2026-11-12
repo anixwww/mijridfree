@@ -22,6 +22,7 @@ export interface TreeMetaItem {
   ownerId: string;
   ownerName?: string;
   title: string;
+  version?: string;
   description?: string;
   isPublic?: boolean;
   personCount?: number;
@@ -49,6 +50,7 @@ export async function getUserTrees(userId: string): Promise<TreeMetaItem[]> {
         ownerId: data.ownerId,
         ownerName: data.ownerName,
         title: data.title || 'Моє родове дерево',
+        version: data.version || 'v0.1',
         description: data.description,
         isPublic: data.isPublic ?? false,
         personCount: data.personCount ?? (data.treeDataJson ? Object.keys(JSON.parse(data.treeDataJson)?.persons || {}).length : 0),
@@ -75,6 +77,7 @@ export async function getTreeById(treeId: string): Promise<FamilyTreeData | null
       const parsed = JSON.parse(data.treeDataJson) as FamilyTreeData;
       parsed.id = treeId;
       parsed.title = data.title || parsed.title;
+      parsed.version = data.version || parsed.version || 'v0.1';
       return parsed;
     }
     return null;
@@ -114,6 +117,7 @@ export async function saveTreeToFirestore(
       ownerId,
       ownerName: ownerName || 'Користувач',
       title: safeTitle,
+      version: treeData.version || 'v0.1',
       description: treeData.description || '',
       isPublic,
       personCount,

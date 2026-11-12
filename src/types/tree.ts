@@ -158,6 +158,7 @@ export interface ClanCoatOfArmsItem {
 export interface FamilyTreeData {
   id: string;
   title: string;
+  version?: string; // Версія дерева, наприклад "v0.1", "v1.0"
   description?: string;
   createdAt: string;
   updatedAt: string;

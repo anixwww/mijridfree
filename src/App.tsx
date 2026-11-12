@@ -115,6 +115,11 @@ export default function App() {
     };
   });
 
+  const treeRef = useRef<FamilyTreeData>(tree);
+  useEffect(() => {
+    treeRef.current = tree;
+  }, [tree]);
+
   // Undo History Stack (up to 35 steps)
   const [historyStack, setHistoryStack] = useState<FamilyTreeData[]>([]);
   const isUndoActionRef = useRef<boolean>(false);
@@ -714,6 +719,94 @@ export default function App() {
     };
   }, [syncStatus]);
 
+  const handleUpdateVersion = useCallback(async (newVersion: string) => {
+    const cleanVersion = newVersion.trim() || 'v0.1';
+    const updatedTree: FamilyTreeData = {
+      ...treeRef.current,
+      version: cleanVersion,
+      updatedAt: new Date().toISOString(),
+    };
+    setTree(updatedTree);
+    setSyncStatus('syncing');
+    const saved = await saveTreeToLocalStorage(updatedTree);
+    if (saved) {
+      setSyncStatus('synced');
+      setLastSavedTime(new Date());
+      showToast({
+        type: 'success',
+        title: 'Версію оновлено',
+        message: `Версію дерева змінено на ${cleanVersion} та збережено на сервері.`,
+      });
+    } else {
+      setSyncStatus('error');
+      showToast({
+        type: 'warning',
+        title: 'Помилка збереження',
+        message: 'Не вдалося зберегти нову версію на сервері.',
+      });
+    }
+  }, [showToast]);
+
+  const syncLatestTreeFromServer = useCallback(async (isGuestMode = false) => {
+    try {
+      const currentId = treeRef.current.id || MAIN_TREE_ID;
+      const serverTree = await loadTreeById(currentId);
+      if (serverTree && serverTree.persons && Object.keys(serverTree.persons).length > 0) {
+        const currentVersion = treeRef.current.version || 'v0.1';
+        const currentUpdated = treeRef.current.updatedAt || '';
+        const serverVersion = serverTree.version || 'v0.1';
+        const serverUpdated = serverTree.updatedAt || '';
+
+        const isVersionChanged = serverVersion !== currentVersion;
+        const isTimestampChanged = serverUpdated > currentUpdated;
+        const isContentChanged = JSON.stringify(serverTree.persons) !== JSON.stringify(treeRef.current.persons);
+
+        if (isVersionChanged || isTimestampChanged || isContentChanged) {
+          setTree({
+            ...serverTree,
+            persons: normalizeCoupleCoordinates(serverTree.persons, serverTree.connectionOverrides),
+          });
+          setLastSavedTime(new Date(serverTree.updatedAt || Date.now()));
+
+          if (isGuestMode && (isVersionChanged || isTimestampChanged)) {
+            showToast({
+              type: 'info',
+              title: `Синхронізовано (${serverVersion})`,
+              message: `Завантажено актуальну версію родоводу від адміністратора.`,
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Sync tree check failed:', err);
+    }
+  }, [showToast]);
+
+  // Periodic polling & visibility change sync for Guest mode and live updates
+  useEffect(() => {
+    if (!isAdmin) {
+      syncLatestTreeFromServer(true);
+    }
+
+    const pollIntervalMs = !isAdmin ? 4000 : 12000;
+    const intervalTimer = setInterval(() => {
+      syncLatestTreeFromServer(!isAdmin);
+    }, pollIntervalMs);
+
+    const handleWindowFocus = () => {
+      syncLatestTreeFromServer(!isAdmin);
+    };
+
+    window.addEventListener('visibilitychange', handleWindowFocus);
+    window.addEventListener('focus', handleWindowFocus);
+
+    return () => {
+      clearInterval(intervalTimer);
+      window.removeEventListener('visibilitychange', handleWindowFocus);
+      window.removeEventListener('focus', handleWindowFocus);
+    };
+  }, [isAdmin, syncLatestTreeFromServer]);
+
   const handleSyncServer = useCallback(async () => {
     setSyncStatus('syncing');
     try {
@@ -729,33 +822,42 @@ export default function App() {
       }
 
       setIsServerConnected(true);
-      const ok = await saveTreeToLocalStorage(tree);
-      if (currentUser && (tree.id || currentTreeOwnerId === currentUser.uid)) {
-        try {
-          await saveTreeToFirestore(
-            tree.id || `tree_${currentUser.uid}`,
-            tree,
-            currentUser.uid,
-            currentUser.displayName || currentUser.email?.split('@')[0] || 'Користувач',
-            false
-          );
-        } catch (err) {
-          console.warn('Firestore manual sync error:', err);
+
+      if (isAdmin) {
+        const ok = await saveTreeToLocalStorage(tree);
+        if (currentUser && (tree.id || currentTreeOwnerId === currentUser.uid)) {
+          try {
+            await saveTreeToFirestore(
+              tree.id || `tree_${currentUser.uid}`,
+              tree,
+              currentUser.uid,
+              currentUser.displayName || currentUser.email?.split('@')[0] || 'Користувач',
+              false
+            );
+          } catch (err) {
+            console.warn('Firestore manual sync error:', err);
+          }
         }
-      }
-      if (ok) {
-        setIsServerConnected(true);
-        setSyncStatus('synced');
-        setLastSavedTime(new Date());
-        showToast({
-          message: "Зв'язок є! Дерево успішно збережено на сервері.",
-          type: 'success',
-        });
+        if (ok) {
+          setIsServerConnected(true);
+          setSyncStatus('synced');
+          setLastSavedTime(new Date());
+          showToast({
+            message: `Дерево (${tree.version || 'v0.1'}) успішно збережено на сервері.`,
+            type: 'success',
+          });
+        } else {
+          setSyncStatus('error');
+          showToast({
+            message: "Помилка при збереженні дерева на сервері.",
+            type: 'error',
+          });
+        }
       } else {
-        setSyncStatus('error');
+        await syncLatestTreeFromServer(true);
         showToast({
-          message: "Помилка при збереженні дерева на сервері.",
-          type: 'error',
+          message: `Синхронізовано з сервером. Поточна версія: ${tree.version || 'v0.1'}.`,
+          type: 'success',
         });
       }
     } catch {
@@ -766,14 +868,17 @@ export default function App() {
         type: 'error',
       });
     }
-  }, [tree, currentUser, currentTreeOwnerId, showToast]);
+  }, [tree, isAdmin, currentUser, currentTreeOwnerId, showToast, syncLatestTreeFromServer]);
 
-  // Auto-save whenever tree changes (skips initial mount to prevent overwriting server)
+  // Auto-save whenever tree changes (skips initial mount and guest mode)
   useEffect(() => {
     if (isInitialMount.current) {
       isInitialMount.current = false;
       return;
     }
+
+    // CRITICAL: Guests only read from server. Only Admin auto-saves modifications!
+    if (!isAdmin) return;
 
     // Don't save if we haven't checked the server yet (prevents blank/stale local data from winning)
     if (!hasLoadedFromServer.current) return;
@@ -826,7 +931,7 @@ export default function App() {
     }, 800);
 
     return () => clearTimeout(timer);
-  }, [tree, currentUser, currentTreeOwnerId]);
+  }, [tree, isAdmin, currentUser, currentTreeOwnerId]);
 
 
   // Handle Undo Action
@@ -3590,6 +3695,8 @@ export default function App() {
         onOpenMyTrees={() => setIsMyTreesModalOpen(true)}
         currentTreeTitle={tree.title || (isMainTree ? 'Головне дерево' : 'Родове полотно')}
         currentTreeId={tree.id || 'my-family-tree'}
+        treeVersion={tree.version || 'v0.1'}
+        onUpdateVersion={handleUpdateVersion}
         isMainTree={isMainTree}
         onReturnToMainTree={() => handleSelectTree('my-family-tree')}
         onSelectTree={handleSelectTree}
