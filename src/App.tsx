@@ -296,6 +296,87 @@ export default function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
+  // Secret admin toggle: 5 clicks with mouse on screen OR 5 keypresses of 'A' / 'a' (both enter and exit)
+  const secretClickCountRef = useRef<number>(0);
+  const secretClickTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const secretKeyCountRef = useRef<number>(0);
+  const secretKeyTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    const handleToggleSecretAdmin = () => {
+      secretClickCountRef.current = 0;
+      secretKeyCountRef.current = 0;
+      const nextAdminState = !isAdmin;
+      setIsAdmin(nextAdminState);
+
+      if (!nextAdminState) {
+        setSelectedPersonIds(new Set());
+      }
+
+      showToast({
+        type: nextAdminState ? 'success' : 'info',
+        title: nextAdminState ? 'Режим адміністратора' : 'Режим гостя',
+        message: nextAdminState
+          ? 'Активовано режим адміністратора (секретний вхід: 5 натискань).'
+          : 'Переведено в режим гостя (тільки перегляд).',
+      });
+    };
+
+    const isInteractiveElement = (target: HTMLElement | null) => {
+      if (!target) return false;
+      return (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.tagName === 'BUTTON' ||
+        target.tagName === 'SELECT' ||
+        target.closest('button') !== null ||
+        target.closest('input') !== null ||
+        target.closest('textarea') !== null ||
+        target.isContentEditable
+      );
+    };
+
+    // Keyboard trigger: press 'A' / 'a' 5 times (Latin 'a' or Cyrillic 'а')
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (isInteractiveElement(e.target as HTMLElement)) return;
+      const key = e.key.toLowerCase();
+      if (key === 'a' || key === 'а') {
+        if (secretKeyTimerRef.current) clearTimeout(secretKeyTimerRef.current);
+        secretKeyCountRef.current += 1;
+        if (secretKeyCountRef.current >= 5) {
+          handleToggleSecretAdmin();
+        } else {
+          secretKeyTimerRef.current = setTimeout(() => {
+            secretKeyCountRef.current = 0;
+          }, 2500);
+        }
+      }
+    };
+
+    // Mouse click trigger: 5 rapid clicks on the screen (not on interactive buttons/inputs)
+    const handleClick = (e: MouseEvent) => {
+      if (isInteractiveElement(e.target as HTMLElement)) return;
+      if (secretClickTimerRef.current) clearTimeout(secretClickTimerRef.current);
+      secretClickCountRef.current += 1;
+      if (secretClickCountRef.current >= 5) {
+        handleToggleSecretAdmin();
+      } else {
+        secretClickTimerRef.current = setTimeout(() => {
+          secretClickCountRef.current = 0;
+        }, 1500);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('click', handleClick);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('click', handleClick);
+      if (secretKeyTimerRef.current) clearTimeout(secretKeyTimerRef.current);
+      if (secretClickTimerRef.current) clearTimeout(secretClickTimerRef.current);
+    };
+  }, [isAdmin, showToast]);
+
   // Clan & Lineage Readability States
   const [isLineageFocus, setIsLineageFocus] = useState<boolean>(false);
   const [focusPersonId, setFocusPersonId] = useState<string | null>(null);
