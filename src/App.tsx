@@ -22,6 +22,7 @@ import {
   deleteTreeFromServerOrStorage,
   fetchServerTrees,
   syncCrossCanvasLinkTitles,
+  syncTreeToCloudAndServer,
 } from './utils/fileStorage';
 import {
   CARD_WIDTH,
@@ -824,46 +825,24 @@ export default function App() {
   const handleSyncServer = useCallback(async () => {
     setSyncStatus('syncing');
     try {
-      const isHealthy = await checkServerHealth();
-      if (!isHealthy) {
-        setIsServerConnected(false);
-        setSyncStatus('offline');
-        showToast({
-          message: "Немає зв'язку із сервером Google AI Studio. Перевірте статус сервера.",
-          type: 'error',
-        });
-        return;
-      }
-
-      setIsServerConnected(true);
-
       if (isAdmin) {
-        const ok = await saveTreeToLocalStorage(tree);
-        if (currentUser && (tree.id || currentTreeOwnerId === currentUser.uid)) {
-          try {
-            await saveTreeToFirestore(
-              tree.id || `tree_${currentUser.uid}`,
-              tree,
-              currentUser.uid,
-              currentUser.displayName || currentUser.email?.split('@')[0] || 'Користувач',
-              false
-            );
-          } catch (err) {
-            console.warn('Firestore manual sync error:', err);
-          }
-        }
+        const ok = await syncTreeToCloudAndServer(
+          tree,
+          currentUser?.uid || 'admin',
+          currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Адміністратор'
+        );
         if (ok) {
           setIsServerConnected(true);
           setSyncStatus('synced');
           setLastSavedTime(new Date());
           showToast({
-            message: `Дерево (${tree.version || 'v0.1'}) успішно збережено на сервері.`,
+            message: `Дерево (${tree.version || 'v0.1'}) успішно синхронізовано з базою даних та сервером.`,
             type: 'success',
           });
         } else {
           setSyncStatus('error');
           showToast({
-            message: "Помилка при збереженні дерева на сервері.",
+            message: "Помилка при синхронізації з базою або сервером.",
             type: 'error',
           });
         }
@@ -878,13 +857,13 @@ export default function App() {
       setIsServerConnected(false);
       setSyncStatus('offline');
       showToast({
-        message: "Немає зв'язку із сервером Google AI Studio.",
+        message: "Немає зв'язку із сервером.",
         type: 'error',
       });
     }
-  }, [tree, isAdmin, currentUser, currentTreeOwnerId, showToast, syncLatestTreeFromServer]);
+  }, [tree, isAdmin, currentUser, showToast, syncLatestTreeFromServer]);
 
-  // Auto-save whenever tree changes (skips initial mount and guest mode)
+  // Auto-save whenever tree changes (skips initial mount and guest mode) - STRICTLY LOCAL
   useEffect(() => {
     if (isInitialMount.current) {
       isInitialMount.current = false;
@@ -911,41 +890,15 @@ export default function App() {
       });
     }
 
-    setSyncStatus('syncing');
-
-    // Debounce save operation to prevent spamming server and memory exhaustion
+    // Debounce local save operation
     const timer = setTimeout(async () => {
-      // 1. Save locally and to local server
-      const ok = await saveTreeToLocalStorage(tree);
-      
-      // 2. If logged in with Firebase, also persist to Firestore cloud
-      if (currentUser && (tree.id || currentTreeOwnerId === currentUser.uid)) {
-        try {
-          await saveTreeToFirestore(
-            tree.id || `tree_${currentUser.uid}`,
-            tree,
-            currentUser.uid,
-            currentUser.displayName || currentUser.email?.split('@')[0] || 'Користувач',
-            false
-          );
-          setCurrentTreeOwnerId(currentUser.uid);
-        } catch (err) {
-          console.warn('Failed to auto-sync tree to Firestore:', err);
-        }
-      }
-
-      if (ok) {
-        setIsServerConnected(true);
-        setSyncStatus('synced');
-        setLastSavedTime(new Date());
-      } else {
-        setIsServerConnected(false);
-        setSyncStatus('offline');
-      }
-    }, 800);
+      await saveTreeToLocalStorage(tree);
+      setSyncStatus('synced');
+      setLastSavedTime(new Date());
+    }, 400);
 
     return () => clearTimeout(timer);
-  }, [tree, isAdmin, currentUser, currentTreeOwnerId]);
+  }, [tree, isAdmin]);
 
 
   // Handle Undo Action

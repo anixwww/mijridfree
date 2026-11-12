@@ -17,7 +17,7 @@ export interface LocalTreeIndexItem {
 }
 
 /**
- * Saves tree data to browser's localStorage, server API, and Firestore cloud database
+ * Saves tree data strictly locally to browser's localStorage (no automatic server/Firestore spam)
  */
 export async function saveTreeToLocalStorage(tree: FamilyTreeData): Promise<boolean> {
   const treeId = tree.id || MAIN_TREE_ID;
@@ -67,21 +67,48 @@ export async function saveTreeToLocalStorage(tree: FamilyTreeData): Promise<bool
     console.warn('Failed to update rodovid_local_trees_index:', err);
   }
 
-  // 3. Save to Firestore Cloud Database (ensures persistence across devices, tabs, and container restarts)
+  logTree(`Збережено локально в пам'яті браузера "${enriched.title}" (${Object.keys(enriched.persons || {}).length} осіб)`, { treeId: enriched.id }, 'info');
+  return true;
+}
+
+/**
+ * Manually synchronizes current tree to Firestore cloud and Server API upon user click
+ */
+export async function syncTreeToCloudAndServer(tree: FamilyTreeData, userId?: string, userName?: string): Promise<boolean> {
+  const treeId = tree.id || MAIN_TREE_ID;
+  const isMainTree = treeId === MAIN_TREE_ID || treeId === 'default-tree' || treeId === 'main-tree';
+
+  const enriched: FamilyTreeData = {
+    ...tree,
+    id: isMainTree ? MAIN_TREE_ID : treeId,
+    title: tree.title || (isMainTree ? 'Головне родове дерево' : 'Родове полотно'),
+    version: tree.version || 'v0.1',
+    updatedAt: new Date().toISOString(),
+  };
+
+  const serialized = JSON.stringify(enriched);
+
+  // First ensure local storage is up to date
+  await saveTreeToLocalStorage(enriched);
+
+  let firestoreSuccess = false;
+  let serverSuccess = false;
+
+  // 1. Save to Firestore Cloud Database
   try {
     await saveTreeToFirestore(
       enriched.id,
       enriched,
-      'admin',
-      'Адміністратор',
+      userId || 'admin',
+      userName || 'Адміністратор',
       true
     );
+    firestoreSuccess = true;
   } catch (err) {
-    logError('database', `Помилка збереження родоводу "${enriched.title}" у Firestore`, { error: String(err), treeId: enriched.id });
-    console.warn('Failed to persist tree to Firestore cloud:', err);
+    logError('database', `Помилка синхронізації родоводу "${enriched.title}" з Firestore`, { error: String(err), treeId: enriched.id });
   }
 
-  // 4. Sync to local Express server API
+  // 2. Sync to local Express server API
   try {
     const endpoint = isMainTree ? '/api/tree' : `/api/tree/${encodeURIComponent(enriched.id)}`;
     const res = await fetch(endpoint, {
@@ -90,17 +117,16 @@ export async function saveTreeToLocalStorage(tree: FamilyTreeData): Promise<bool
       body: serialized,
     });
     if (!res.ok) {
-      logError('server', `Сервер повернув код ${res.status} при збереженні полотна "${enriched.title}"`, { endpoint, status: res.status });
-      console.warn('Server responded with error status for tree save:', res.status);
+      logError('server', `Сервер повернув код ${res.status} при синхронізації полотна "${enriched.title}"`, { endpoint, status: res.status });
     } else {
-      logServer(`Успішно збережено та синхронізовано полотно "${enriched.title}" (${Object.keys(enriched.persons || {}).length} осіб, версія: ${enriched.version || 'v0.1'})`, { endpoint, treeId: enriched.id }, 'success');
+      serverSuccess = true;
+      logServer(`Успішно синхронізовано полотно "${enriched.title}" з базою та сервером (${Object.keys(enriched.persons || {}).length} осіб, версія: ${enriched.version || 'v0.1'})`, { endpoint, treeId: enriched.id }, 'success');
     }
-    return true;
   } catch (err) {
-    logError('server', `Мережева помилка при синхронізації з сервером API`, { error: String(err), treeId: enriched.id });
-    console.warn('Failed to sync tree to server backend (Firestore backup active):', err);
-    return true; // Return true because Firestore cloud save succeeded
+    logError('server', `Мережева помилка при ручній синхронізації з сервером API`, { error: String(err), treeId: enriched.id });
   }
+
+  return firestoreSuccess || serverSuccess;
 }
 
 /**
