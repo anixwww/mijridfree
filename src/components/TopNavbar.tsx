@@ -38,8 +38,10 @@ interface TopNavbarProps {
   personCount: number;
   generationCount: number;
   onSyncServer?: () => void;
-  syncStatus?: 'synced' | 'syncing' | 'error' | 'offline';
+  onForceRefreshFromCloud?: () => void;
+  syncStatus?: 'synced' | 'syncing' | 'error' | 'offline' | 'rejected' | 'schema_mismatch';
   isServerConnected?: boolean;
+  lastSavedTime?: Date | null;
   onOpenAnalytics?: () => void;
   onOpenReactionsModal?: () => void;
   totalReactionsCount?: number;
@@ -78,8 +80,10 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
   onExportImage,
   personCount,
   onSyncServer,
+  onForceRefreshFromCloud,
   syncStatus = 'synced',
   isServerConnected = true,
+  lastSavedTime,
   onOpenAnalytics,
   onOpenReactionsModal,
   totalReactionsCount = 0,
@@ -527,6 +531,8 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
             syncStatus={syncStatus}
             isServerConnected={isServerConnected}
             onSyncServer={onSyncServer}
+            onForceRefreshFromCloud={onForceRefreshFromCloud}
+            lastSavedTime={lastSavedTime}
           />
 
           {/* Master Menu Dropdown */}

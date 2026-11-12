@@ -586,7 +586,7 @@ export default function App() {
   const isDraggingCardRef = useRef<boolean>(false);
   const dragStartTreeRef = useRef<FamilyTreeData | null>(null);
 
-  const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'error' | 'offline'>('synced');
+  const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'error' | 'offline' | 'rejected' | 'schema_mismatch'>('synced');
   const [isServerConnected, setIsServerConnected] = useState<boolean>(true);
 
   // Periodic heartbeat & connectivity detection with Google AI Studio server (60s to save CPU and network)
@@ -654,8 +654,29 @@ export default function App() {
             currentUser.displayName || currentUser.email?.split('@')[0] || 'Користувач',
             false
           );
-        } catch (err) {
+        } catch (err: any) {
           console.warn('Firestore manual sync error:', err);
+          const errStr = err?.message || String(err);
+          if (
+            errStr.includes('permissions') ||
+            errStr.includes('PERMISSION_DENIED') ||
+            errStr.includes('permission-denied') ||
+            errStr.includes('rejected')
+          ) {
+            setSyncStatus('rejected');
+            showToast({
+              message: "Доступ до Firestore відхилено (Помилка прав доступу / Permission Denied).",
+              type: 'error',
+            });
+            return;
+          } else if (errStr.includes('JSON') || errStr.includes('Unexpected') || errStr.includes('schema')) {
+            setSyncStatus('schema_mismatch');
+            showToast({
+              message: "Невідповідність схеми документа у хмарі.",
+              type: 'error',
+            });
+            return;
+          }
         }
       }
       if (ok) {
@@ -673,15 +694,108 @@ export default function App() {
           type: 'error',
         });
       }
-    } catch {
+    } catch (err: any) {
       setIsServerConnected(false);
-      setSyncStatus('offline');
-      showToast({
-        message: "Немає зв'язку із сервером Google AI Studio.",
-        type: 'error',
-      });
+      const errStr = err?.message || String(err);
+      if (
+        errStr.includes('permissions') ||
+        errStr.includes('PERMISSION_DENIED') ||
+        errStr.includes('permission-denied') ||
+        errStr.includes('rejected')
+      ) {
+        setSyncStatus('rejected');
+        showToast({
+          message: "Доступ до Firestore відхилено (Помилка прав доступу).",
+          type: 'error',
+        });
+      } else {
+        setSyncStatus('offline');
+        showToast({
+          message: "Немає зв'язку із сервером Google AI Studio.",
+          type: 'error',
+        });
+      }
     }
   }, [tree, currentUser, currentTreeOwnerId, showToast]);
+
+  const handleForceRefreshFromCloud = useCallback(async () => {
+    setSyncStatus('syncing');
+    showToast({
+      message: "Примусове оновлення з хмари (ігноруючи локальний кеш)...",
+      type: 'info',
+    });
+    try {
+      const targetTreeId = tree.id || MAIN_TREE_ID;
+      // 1. Clear local cache for this tree
+      localStorage.removeItem(`rodovid_tree_${targetTreeId}`);
+      if (targetTreeId === MAIN_TREE_ID) {
+        localStorage.removeItem('rodovid_family_tree_v2');
+      }
+
+      // 2. Fetch directly from Firestore cloud database
+      const cloudTree = await getTreeById(targetTreeId);
+      if (cloudTree && cloudTree.persons && Object.keys(cloudTree.persons).length > 0) {
+        setTree(cloudTree);
+        setSyncStatus('synced');
+        setLastSavedTime(new Date());
+        showToast({
+          message: "Дерево успішно оновлено з хмари (локальний кеш оновлено).",
+          type: 'success',
+        });
+        return;
+      }
+
+      // 3. Fallback to server endpoint
+      const res = await fetch(
+        targetTreeId === MAIN_TREE_ID ? '/api/tree' : `/api/tree/${encodeURIComponent(targetTreeId)}`
+      );
+      if (res.ok) {
+        const json = await res.json();
+        if (json && json.success && json.data && json.data.persons) {
+          setTree(json.data);
+          setSyncStatus('synced');
+          setLastSavedTime(new Date());
+          showToast({
+            message: "Дерево успішно оновлено з сервера.",
+            type: 'success',
+          });
+          return;
+        }
+      }
+
+      setSyncStatus('schema_mismatch');
+      showToast({
+        message: "У хмарі не знайдено даних або структура схеми документа змінена.",
+        type: 'warning',
+      });
+    } catch (err: any) {
+      const errStr = err?.message || String(err);
+      if (
+        errStr.includes('permissions') ||
+        errStr.includes('PERMISSION_DENIED') ||
+        errStr.includes('permission-denied') ||
+        errStr.includes('rejected')
+      ) {
+        setSyncStatus('rejected');
+        showToast({
+          message: "Доступ до Firestore відхилено (Помилка прав доступу / Permission Denied).",
+          type: 'error',
+        });
+      } else if (errStr.includes('JSON') || errStr.includes('Unexpected') || errStr.includes('schema')) {
+        setSyncStatus('schema_mismatch');
+        showToast({
+          message: "Невідповідність схеми документа у хмарі.",
+          type: 'error',
+        });
+      } else {
+        setSyncStatus('error');
+        showToast({
+          message: `Помилка примусового оновлення: ${errStr.slice(0, 80)}`,
+          type: 'error',
+        });
+      }
+    }
+  }, [tree.id, showToast]);
 
   // Auto-save whenever tree changes (skips initial mount to prevent overwriting server)
   useEffect(() => {
@@ -3471,8 +3585,10 @@ export default function App() {
         personCount={personCount}
         generationCount={generationCount}
         onSyncServer={handleSyncServer}
+        onForceRefreshFromCloud={handleForceRefreshFromCloud}
         syncStatus={syncStatus}
         isServerConnected={isServerConnected}
+        lastSavedTime={lastSavedTime}
         onOpenAnalytics={() => setIsAnalyticsModalOpen(true)}
         onOpenReactionsModal={() => setIsReactionsModalOpen(true)}
         totalReactionsCount={totalReactionsCount}
