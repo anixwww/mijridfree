@@ -16,6 +16,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { FamilyTreeData } from '../types/tree';
+import { logDatabase, logError } from './logger';
 
 export interface TreeMetaItem {
   id: string;
@@ -58,8 +59,10 @@ export async function getUserTrees(userId: string): Promise<TreeMetaItem[]> {
         updatedAt: data.updatedAt,
       });
     });
+    logDatabase(`Прочитано користувацькі дерева з Firestore (${trees.length} полотен)`, { userId, count: trees.length });
     return trees.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-  } catch {
+  } catch (err) {
+    logError('database', `Помилка завантаження списку дерев користувача з Firestore`, { userId, error: String(err) });
     return [];
   }
 }
@@ -78,10 +81,12 @@ export async function getTreeById(treeId: string): Promise<FamilyTreeData | null
       parsed.id = treeId;
       parsed.title = data.title || parsed.title;
       parsed.version = data.version || parsed.version || 'v0.1';
+      logDatabase(`Успішно зчитано родовід "${parsed.title}" з Firestore (ID: ${treeId})`, { treeId, title: parsed.title, version: parsed.version });
       return parsed;
     }
     return null;
-  } catch {
+  } catch (err) {
+    logError('database', `Помилка читання документа дерева ${treeId} з Firestore`, { treeId, error: String(err) });
     return null;
   }
 }
@@ -127,8 +132,9 @@ export async function saveTreeToFirestore(
     };
 
     await setDoc(docRef, record);
-  } catch {
-    // Silently catch permission or network errors so local persistence remains unaffected
+    logDatabase(`Успішно збережено родовід "${safeTitle}" у Firestore (ID: ${treeId}, картки: ${personCount})`, { treeId, title: safeTitle, ownerId, personCount }, 'success');
+  } catch (err) {
+    logError('database', `Помилка запису родового дерева ${treeId} у Firestore`, { treeId, error: String(err) });
   }
 }
 
@@ -139,8 +145,9 @@ export async function deleteTreeFromFirestore(treeId: string): Promise<void> {
   try {
     const docRef = doc(db, 'trees', treeId);
     await deleteDoc(docRef);
-  } catch {
-    // Silently catch
+    logDatabase(`Видалено родовід ${treeId} з Firestore`, { treeId });
+  } catch (err) {
+    logError('database', `Помилка видалення документа ${treeId} з Firestore`, { treeId, error: String(err) });
   }
 }
 

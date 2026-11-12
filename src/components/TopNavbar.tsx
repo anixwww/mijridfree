@@ -16,6 +16,7 @@ import {
   Check,
   Layers,
   Tag,
+  Terminal,
 } from 'lucide-react';
 import { ServerStatusIndicator } from './ServerStatusIndicator';
 import { fetchServerTrees, MAIN_TREE_ID } from '../utils/fileStorage';
@@ -54,6 +55,7 @@ interface TopNavbarProps {
   onOpenUserIdentity?: () => void;
   onLoadJsonFile?: (file: File) => void;
   onOpenImportModal?: () => void;
+  onOpenLogs?: () => void;
 }
 
 export interface CanvasItem {
@@ -91,6 +93,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
   onToggleCalendar,
   onOpenImportModal,
   onLoadJsonFile,
+  onOpenLogs,
 }) => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -668,6 +671,23 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
                       <Upload size={15} className="text-emerald-700 shrink-0 group-hover:scale-110 transition-transform" />
                       <span className="flex-1 truncate">Імпорт JSON</span>
                       <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded font-bold">
+                        БД + Сервер
+                      </span>
+                    </button>
+                  )}
+
+                  {/* Логи системи (Тільки для Адміністратора) */}
+                  {isAdmin && onOpenLogs && (
+                    <button
+                      onClick={() => {
+                        onOpenLogs();
+                        setIsMenuOpen(false);
+                      }}
+                      className="w-full h-9 px-2.5 rounded-xl hover:bg-stone-900 hover:text-emerald-400 text-stone-800 text-xs font-semibold flex items-center gap-2.5 transition-colors cursor-pointer text-left group"
+                    >
+                      <Terminal size={15} className="text-stone-700 group-hover:text-emerald-400 shrink-0 group-hover:scale-110 transition-transform" />
+                      <span className="flex-1 truncate">Логи системи</span>
+                      <span className="text-[10px] bg-stone-100 group-hover:bg-stone-800 text-stone-700 group-hover:text-emerald-300 px-1.5 py-0.2 rounded font-bold font-mono">
                         БД + Сервер
                       </span>
                     </button>

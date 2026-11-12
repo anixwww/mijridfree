@@ -1,3 +1,5 @@
+import { logAuth, logError } from './logger';
+
 const TOKEN_KEY = 'rodovid_admin_token';
 const LEGACY_ROLE_KEY = 'roodovid_role';
 
@@ -15,6 +17,7 @@ export function setAuthToken(token: string): void {
   try {
     localStorage.setItem(TOKEN_KEY, token);
     localStorage.removeItem(LEGACY_ROLE_KEY);
+    logAuth('Авторизаційний токен адміністратора збережено в локальну сесію', {}, 'info');
   } catch (err) {
     console.warn('Cannot persist auth token:', err);
   }
@@ -24,6 +27,7 @@ export function clearAuthToken(): void {
   try {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(LEGACY_ROLE_KEY);
+    logAuth('Сесію адміністратора закрито. Перехід у режим гостя.', {}, 'info');
   } catch {
     /* ignore */
   }
@@ -36,6 +40,7 @@ export function authHeaders(): Record<string, string> {
 
 /** Drops the token and notifies the app when the server rejects it. */
 export function handleUnauthorized(): void {
+  logError('auth', 'Токен адміністратора застарів або недійсний. Сесію скинуто.');
   clearAuthToken();
   window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
 }
@@ -46,11 +51,17 @@ export async function verifyStoredToken(): Promise<boolean> {
   try {
     const res = await fetch('/api/session', { headers: authHeaders() });
     if (res.status === 401) {
+      logError('auth', 'Сервер відхилив токен адміністратора (401 Unauthorized)');
       clearAuthToken();
       return false;
     }
+    if (res.ok) {
+      logAuth('Успішна верифікація токена адміністратора на сервері', {}, 'success');
+      return true;
+    }
     return res.ok;
-  } catch {
+  } catch (err) {
+    logError('auth', 'Помилка мережі при перевірці сесії адміністратора', { error: String(err) });
     // Network problem: keep the token, the server will re-check on the next save.
     return true;
   }
@@ -67,10 +78,13 @@ export async function loginWithPassword(password: string): Promise<boolean> {
     const data = await res.json().catch(() => null);
     if (res.ok && data?.success && data.token) {
       setAuthToken(data.token);
+      logAuth('Успішний вхід у режим Адміністратора', {}, 'success');
       return true;
     }
+    logError('auth', 'Спроба входу в режим Адміністратора відхилена (невірний пароль)');
     return false;
-  } catch {
+  } catch (err) {
+    logError('auth', 'Мережева помилка при спробі входу адміністратора', { error: String(err) });
     return false;
   }
 }

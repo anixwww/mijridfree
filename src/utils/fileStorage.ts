@@ -2,6 +2,7 @@ import { FamilyTreeData, Person } from '../types/tree';
 import { authHeaders, getAuthToken, handleUnauthorized } from './auth';
 import { getTreeById, saveTreeToFirestore } from './firestoreTreeService';
 import { parseGedcomText, parseCsvText } from './gedcomParser';
+import { logServer, logDatabase, logTree, logError } from './logger';
 
 const LOCAL_STORAGE_KEY = 'rodovid_family_tree_v2';
 
@@ -76,6 +77,7 @@ export async function saveTreeToLocalStorage(tree: FamilyTreeData): Promise<bool
       true
     );
   } catch (err) {
+    logError('database', `Помилка збереження родоводу "${enriched.title}" у Firestore`, { error: String(err), treeId: enriched.id });
     console.warn('Failed to persist tree to Firestore cloud:', err);
   }
 
@@ -88,10 +90,14 @@ export async function saveTreeToLocalStorage(tree: FamilyTreeData): Promise<bool
       body: serialized,
     });
     if (!res.ok) {
+      logError('server', `Сервер повернув код ${res.status} при збереженні полотна "${enriched.title}"`, { endpoint, status: res.status });
       console.warn('Server responded with error status for tree save:', res.status);
+    } else {
+      logServer(`Успішно збережено та синхронізовано полотно "${enriched.title}" (${Object.keys(enriched.persons || {}).length} осіб, версія: ${enriched.version || 'v0.1'})`, { endpoint, treeId: enriched.id }, 'success');
     }
     return true;
   } catch (err) {
+    logError('server', `Мережева помилка при синхронізації з сервером API`, { error: String(err), treeId: enriched.id });
     console.warn('Failed to sync tree to server backend (Firestore backup active):', err);
     return true; // Return true because Firestore cloud save succeeded
   }

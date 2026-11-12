@@ -72,6 +72,7 @@ import { MyTreesModal } from './components/MyTreesModal';
 import { MetricModal } from './components/MetricModal';
 import { DatesCalendarSidebar, extractCalendarEvents } from './components/DatesCalendarSidebar';
 import { ReactionsModal } from './components/ReactionsModal';
+import { SystemLogsModal } from './components/SystemLogsModal';
 import { ToastContainer, ToastMessage } from './components/Toast';
 import { MiniMap } from './components/MiniMap';
 import { ShortcutsHelpModal } from './components/ShortcutsHelpModal';
@@ -279,6 +280,7 @@ export default function App() {
   } | null>(null);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [isLogsModalOpen, setIsLogsModalOpen] = useState(false);
   const [draggedJsonFile, setDraggedJsonFile] = useState<File | null>(null);
   const [isDraggingFileOnCanvas, setIsDraggingFileOnCanvas] = useState(false);
   const [isAnalyticsModalOpen, setIsAnalyticsModalOpen] = useState(false);
@@ -3777,6 +3779,7 @@ export default function App() {
           setIsImportModalOpen(true);
         }}
         onLoadJsonFile={handleLoadJson}
+        onOpenLogs={() => setIsLogsModalOpen(true)}
       />
 
       {/* 2. Interactive Canvas Container */}
@@ -4656,6 +4659,12 @@ export default function App() {
         clanList={clanList}
         onSelectPerson={centerOnPerson}
         onFilterClan={(clan) => setSelectedClanFilter(clan)}
+      />
+
+      {/* System Logs Modal (Admin view for server, DB, auth & runtime events) */}
+      <SystemLogsModal
+        isOpen={isLogsModalOpen}
+        onClose={() => setIsLogsModalOpen(false)}
       />
 
       {/* Clan Coat of Arms Modal (Upload or Generate Clan Crest) */}
