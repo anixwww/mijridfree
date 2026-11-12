@@ -2,7 +2,7 @@ import React, {  } from 'react';
 import { FamilyTreeData } from '../types/tree';
 import { downloadTreeJson } from '../utils/fileStorage';
 import { downloadGedcomFile } from '../utils/gedcomExport';
-import { X, Image as ImageIcon, Download, Printer, FileCode } from 'lucide-react';
+import { X, Image as ImageIcon, Download, Printer, FileCode, Upload } from 'lucide-react';
 
 interface ExportModalProps {
   tree: FamilyTreeData;
@@ -10,6 +10,8 @@ interface ExportModalProps {
   onClose: () => void;
   onExportPng: () => void;
   onExportSvg: () => void;
+  isAdmin?: boolean;
+  onOpenImport?: () => void;
 }
 
 export const ExportModal: React.FC<ExportModalProps> = ({
@@ -18,6 +20,8 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   onClose,
   onExportPng,
   onExportSvg,
+  isAdmin = false,
+  onOpenImport,
 }) => {
   if (!isOpen) return null;
 
@@ -165,10 +169,25 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3 bg-stone-50 border-t border-stone-200 flex justify-end">
+        <div className="px-5 py-3 bg-stone-50 border-t border-stone-200 flex items-center justify-between">
+          {isAdmin && onOpenImport ? (
+            <button
+              onClick={() => {
+                onClose();
+                onOpenImport();
+              }}
+              className="px-3 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+            >
+              <Upload size={14} className="text-emerald-700" />
+              <span>Імпортувати JSON (Адмін)</span>
+            </button>
+          ) : (
+            <div />
+          )}
+
           <button
             onClick={onClose}
-            className="px-4 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-200/60 rounded-lg transition-colors"
+            className="px-4 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-200/60 rounded-lg transition-colors cursor-pointer"
           >
             Закрити
           </button>

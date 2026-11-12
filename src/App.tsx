@@ -60,6 +60,7 @@ import { EditPersonModal } from './components/EditPersonModal';
 import { EditConnectionModal } from './components/EditConnectionModal';
 import { ConnectPersonsModal, ConnectOptions } from './components/ConnectPersonsModal';
 import { ExportModal } from './components/ExportModal';
+import { ImportJsonModal } from './components/ImportJsonModal';
 import { AuthModal } from './components/AuthModal';
 import { TimelineRuler, CanvasTimelineGuidelines } from './components/TimelineRuler';
 import { AnalyticsModal } from './components/AnalyticsModal';
@@ -75,7 +76,7 @@ import { ShortcutsHelpModal } from './components/ShortcutsHelpModal';
 import { buildSpatialGrid, getVisibleItemsFromGrid } from './utils/virtualization';
 import { useAuth } from './context/AuthContext';
 import { getTreeById, saveTreeToFirestore, deleteTreeFromFirestore } from './utils/firestoreTreeService';
-import { Cake, Flame, X as CloseIcon, Lock, FolderTree, Copy, Clipboard, Users, Crown, Check, Trash2, X } from 'lucide-react';
+import { Cake, Flame, X as CloseIcon, Lock, FolderTree, Copy, Clipboard, Users, Crown, Check, Trash2, X, Upload } from 'lucide-react';
 
 
 interface AlignmentProposal {
@@ -181,8 +182,6 @@ export default function App() {
     };
   }, []);
 
-
-
   // Clear any card multi-selections when switching to Guest mode
   useEffect(() => {
     if (!isAdmin) {
@@ -271,6 +270,9 @@ export default function App() {
     initialType: RelativeType;
   } | null>(null);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [draggedJsonFile, setDraggedJsonFile] = useState<File | null>(null);
+  const [isDraggingFileOnCanvas, setIsDraggingFileOnCanvas] = useState(false);
   const [isAnalyticsModalOpen, setIsAnalyticsModalOpen] = useState(false);
   const [editingConnectionId, setEditingConnectionId] = useState<string | null>(null);
   const [connectionClickCoords, setConnectionClickCoords] = useState<{ x: number; y: number } | null>(null);
@@ -293,78 +295,6 @@ export default function App() {
   const dismissToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
-
-  // Secret admin login: press English 'a' 5 times OR click 5 times rapidly
-  const secretTriggerCountRef = useRef<number>(0);
-  const secretTriggerTimerRef = useRef<NodeJS.Timeout | null>(null);
-
-  useEffect(() => {
-    const handleTrigger = () => {
-      secretTriggerCountRef.current = 0;
-      const nextState = !isAdmin;
-      setIsAdmin(nextState);
-      if (nextState) {
-        showToast({
-          type: 'success',
-          title: 'Секретний вхід',
-          message: 'Режим адміністратора активовано секретною комбінацією (5 натискань).',
-        });
-      } else {
-        showToast({
-          type: 'info',
-          title: 'Секретний вихід',
-          message: 'Переведено в режим гостя.',
-        });
-      }
-    };
-
-    const handleInputOrButton = (e: Event) => {
-      const target = e.target as HTMLElement;
-      return (
-        target &&
-        (target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
-          target.tagName === 'BUTTON' ||
-          target.isContentEditable)
-      );
-    };
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (handleInputOrButton(e as any)) return;
-      if (e.key.toLowerCase() === 'a') {
-        if (secretTriggerTimerRef.current) clearTimeout(secretTriggerTimerRef.current);
-        secretTriggerCountRef.current += 1;
-        if (secretTriggerCountRef.current >= 5) {
-          handleTrigger();
-        } else {
-          secretTriggerTimerRef.current = setTimeout(() => {
-            secretTriggerCountRef.current = 0;
-          }, 3000);
-        }
-      }
-    };
-
-    const handleClick = (e: MouseEvent) => {
-      if (handleInputOrButton(e as any)) return;
-      if (secretTriggerTimerRef.current) clearTimeout(secretTriggerTimerRef.current);
-      secretTriggerCountRef.current += 1;
-      if (secretTriggerCountRef.current >= 5) {
-        handleTrigger();
-      } else {
-        secretTriggerTimerRef.current = setTimeout(() => {
-          secretTriggerCountRef.current = 0;
-        }, 1500); // Taps should be faster than keypresses
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('click', handleClick);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('click', handleClick);
-      if (secretTriggerTimerRef.current) clearTimeout(secretTriggerTimerRef.current);
-    };
-  }, [isAdmin, showToast]);
 
   // Clan & Lineage Readability States
   const [isLineageFocus, setIsLineageFocus] = useState<boolean>(false);
@@ -660,7 +590,7 @@ export default function App() {
   const isDraggingCardRef = useRef<boolean>(false);
   const dragStartTreeRef = useRef<FamilyTreeData | null>(null);
 
-  const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'error' | 'offline' | 'rejected' | 'schema_mismatch'>('synced');
+  const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'error' | 'offline'>('synced');
   const [isServerConnected, setIsServerConnected] = useState<boolean>(true);
 
   // Periodic heartbeat & connectivity detection with Google AI Studio server (60s to save CPU and network)
@@ -728,29 +658,8 @@ export default function App() {
             currentUser.displayName || currentUser.email?.split('@')[0] || 'Користувач',
             false
           );
-        } catch (err: any) {
+        } catch (err) {
           console.warn('Firestore manual sync error:', err);
-          const errStr = err?.message || String(err);
-          if (
-            errStr.includes('permissions') ||
-            errStr.includes('PERMISSION_DENIED') ||
-            errStr.includes('permission-denied') ||
-            errStr.includes('rejected')
-          ) {
-            setSyncStatus('rejected');
-            showToast({
-              message: "Доступ до Firestore відхилено (Помилка прав доступу / Permission Denied).",
-              type: 'error',
-            });
-            return;
-          } else if (errStr.includes('JSON') || errStr.includes('Unexpected') || errStr.includes('schema')) {
-            setSyncStatus('schema_mismatch');
-            showToast({
-              message: "Невідповідність схеми документа у хмарі.",
-              type: 'error',
-            });
-            return;
-          }
         }
       }
       if (ok) {
@@ -768,108 +677,15 @@ export default function App() {
           type: 'error',
         });
       }
-    } catch (err: any) {
+    } catch {
       setIsServerConnected(false);
-      const errStr = err?.message || String(err);
-      if (
-        errStr.includes('permissions') ||
-        errStr.includes('PERMISSION_DENIED') ||
-        errStr.includes('permission-denied') ||
-        errStr.includes('rejected')
-      ) {
-        setSyncStatus('rejected');
-        showToast({
-          message: "Доступ до Firestore відхилено (Помилка прав доступу).",
-          type: 'error',
-        });
-      } else {
-        setSyncStatus('offline');
-        showToast({
-          message: "Немає зв'язку із сервером Google AI Studio.",
-          type: 'error',
-        });
-      }
+      setSyncStatus('offline');
+      showToast({
+        message: "Немає зв'язку із сервером Google AI Studio.",
+        type: 'error',
+      });
     }
   }, [tree, currentUser, currentTreeOwnerId, showToast]);
-
-  const handleForceRefreshFromCloud = useCallback(async () => {
-    setSyncStatus('syncing');
-    showToast({
-      message: "Примусове оновлення з хмари (ігноруючи локальний кеш)...",
-      type: 'info',
-    });
-    try {
-      const targetTreeId = tree.id || MAIN_TREE_ID;
-      // 1. Clear local cache for this tree
-      localStorage.removeItem(`rodovid_tree_${targetTreeId}`);
-      if (targetTreeId === MAIN_TREE_ID) {
-        localStorage.removeItem('rodovid_family_tree_v2');
-      }
-
-      // 2. Fetch directly from Firestore cloud database
-      const cloudTree = await getTreeById(targetTreeId);
-      if (cloudTree && cloudTree.persons && Object.keys(cloudTree.persons).length > 0) {
-        setTree(cloudTree);
-        setSyncStatus('synced');
-        setLastSavedTime(new Date());
-        showToast({
-          message: "Дерево успішно оновлено з хмари (локальний кеш оновлено).",
-          type: 'success',
-        });
-        return;
-      }
-
-      // 3. Fallback to server endpoint
-      const res = await fetch(
-        targetTreeId === MAIN_TREE_ID ? '/api/tree' : `/api/tree/${encodeURIComponent(targetTreeId)}`
-      );
-      if (res.ok) {
-        const json = await res.json();
-        if (json && json.success && json.data && json.data.persons) {
-          setTree(json.data);
-          setSyncStatus('synced');
-          setLastSavedTime(new Date());
-          showToast({
-            message: "Дерево успішно оновлено з сервера.",
-            type: 'success',
-          });
-          return;
-        }
-      }
-
-      setSyncStatus('schema_mismatch');
-      showToast({
-        message: "У хмарі не знайдено даних або структура схеми документа змінена.",
-        type: 'warning',
-      });
-    } catch (err: any) {
-      const errStr = err?.message || String(err);
-      if (
-        errStr.includes('permissions') ||
-        errStr.includes('PERMISSION_DENIED') ||
-        errStr.includes('permission-denied') ||
-        errStr.includes('rejected')
-      ) {
-        setSyncStatus('rejected');
-        showToast({
-          message: "Доступ до Firestore відхилено (Помилка прав доступу / Permission Denied).",
-          type: 'error',
-        });
-      } else if (errStr.includes('JSON') || errStr.includes('Unexpected') || errStr.includes('schema')) {
-        setSyncStatus('schema_mismatch');
-        showToast({
-          message: "Невідповідність схеми документа у хмарі.",
-          type: 'error',
-        });
-      } else {
-        setSyncStatus('error');
-        showToast({
-          message: `Помилка примусового оновлення: ${errStr.slice(0, 80)}`,
-          type: 'error',
-        });
-      }
-    }
-  }, [tree.id, showToast]);
 
   // Auto-save whenever tree changes (skips initial mount to prevent overwriting server)
   useEffect(() => {
@@ -3143,39 +2959,83 @@ export default function App() {
     }
   };
 
-  // Load JSON file from computer
-  const handleLoadJson = async (file: File) => {
+  // Import and immediately synchronize tree from JSON file
+  const handleImportTreeFromJson = async (
+    importedTree: FamilyTreeData,
+    mode: 'replace' | 'new-canvas',
+    canvasTitle?: string
+  ) => {
     try {
       hasCenteredTreeIdRef.current = null;
-      const loaded = await parseTreeJsonFile(file);
-      setTree(loaded);
-      setSelectedPersonId(loaded.selectedPersonId || Object.keys(loaded.persons)[0] || null);
-      
-      // Explicitly trigger a save immediately to ensure server is updated
-      const saved = await saveTreeToLocalStorage(loaded);
+      let targetTree: FamilyTreeData;
+
+      if (mode === 'new-canvas') {
+        const newId = `tree_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        targetTree = {
+          ...importedTree,
+          id: newId,
+          title: canvasTitle || importedTree.title || 'Нове родове полотно',
+          updatedAt: new Date().toISOString(),
+        };
+      } else {
+        // Replace current canvas
+        targetTree = {
+          ...importedTree,
+          id: tree.id || 'my-family-tree',
+          title: canvasTitle || importedTree.title || tree.title || 'Головне дерево',
+          updatedAt: new Date().toISOString(),
+        };
+      }
+
+      // Update in-memory state
+      setTree(targetTree);
+      setSelectedPersonId(targetTree.selectedPersonId || Object.keys(targetTree.persons)[0] || null);
+
+      // Save and synchronize immediately across LocalStorage, Firestore database, and Server API
+      setSyncStatus('syncing');
+      const saved = await saveTreeToLocalStorage(targetTree);
+
       if (saved) {
+        setSyncStatus('synced');
         setLastSavedTime(new Date());
         showToast({
           type: 'success',
-          title: 'Файл імпортовано',
-          message: `Успішно завантажено родовід (${Object.keys(loaded.persons || {}).length} осіб).`,
+          title: 'Імпорт успішно завершено',
+          message: `Родовід "${targetTree.title}" (${Object.keys(targetTree.persons || {}).length} осіб) синхронізовано з базою даних та сервером.`,
         });
       } else {
+        setSyncStatus('error');
         showToast({
           type: 'warning',
           title: 'Увага',
-          message: "Дані збережено локально, але сталася помилка зв'язку з сервером.",
+          message: 'Дані збережено локально, але перевірте статус зʼєднання з сервером.',
         });
       }
-      
+
       setTimeout(fitToContent, 100);
     } catch (err) {
+      setSyncStatus('error');
       showToast({
         type: 'error',
-        title: 'Помилка відкриття файлу',
+        title: 'Помилка імпорту',
         message: (err as Error).message,
       });
+      throw err;
     }
+  };
+
+  // Quick Load JSON file from computer
+  const handleLoadJson = async (file: File) => {
+    if (!isAdmin) {
+      showToast({
+        type: 'warning',
+        title: 'Необхідні права адміністратора',
+        message: 'Імпорт файлів доступний лише в режимі адміністратора.',
+      });
+      return;
+    }
+    setDraggedJsonFile(file);
+    setIsImportModalOpen(true);
   };
 
   // Clipboard buffer count state
@@ -3659,10 +3519,8 @@ export default function App() {
         personCount={personCount}
         generationCount={generationCount}
         onSyncServer={handleSyncServer}
-        onForceRefreshFromCloud={handleForceRefreshFromCloud}
         syncStatus={syncStatus}
         isServerConnected={isServerConnected}
-        lastSavedTime={lastSavedTime}
         onOpenAnalytics={() => setIsAnalyticsModalOpen(true)}
         onOpenReactionsModal={() => setIsReactionsModalOpen(true)}
         totalReactionsCount={totalReactionsCount}
@@ -3679,6 +3537,11 @@ export default function App() {
         onOpenShortcutsModal={() => setIsShortcutsModalOpen(true)}
         userPersonName={userPersonName}
         onOpenUserIdentity={() => setIsUserIdentityModalOpen(true)}
+        onOpenImportModal={() => {
+          setDraggedJsonFile(null);
+          setIsImportModalOpen(true);
+        }}
+        onLoadJsonFile={handleLoadJson}
       />
 
       {/* 2. Interactive Canvas Container */}
@@ -3691,8 +3554,42 @@ export default function App() {
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
+        onDragOver={(e) => {
+          if (!isAdmin) return;
+          if (e.dataTransfer.types.includes('Files')) {
+            e.preventDefault();
+            setIsDraggingFileOnCanvas(true);
+          }
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+            setIsDraggingFileOnCanvas(false);
+          }
+        }}
+        onDrop={(e) => {
+          if (!isAdmin) return;
+          setIsDraggingFileOnCanvas(false);
+          const dropped = e.dataTransfer.files?.[0];
+          if (dropped && (dropped.name.endsWith('.json') || dropped.type.includes('json'))) {
+            e.preventDefault();
+            setDraggedJsonFile(dropped);
+            setIsImportModalOpen(true);
+          }
+        }}
         className="flex-1 relative overflow-hidden cursor-grab active:cursor-grabbing bg-[#f8faf8] touch-none"
       >
+        {/* Full-canvas Drag & Drop Overlay for Admin */}
+        {isDraggingFileOnCanvas && isAdmin && (
+          <div className="absolute inset-0 bg-emerald-950/70 z-50 flex flex-col items-center justify-center p-6 backdrop-blur-xs text-white pointer-events-none animate-in fade-in duration-150">
+            <div className="w-20 h-20 rounded-3xl bg-emerald-500/20 border-2 border-emerald-400 border-dashed flex items-center justify-center mb-4">
+              <Upload size={38} className="text-emerald-300 animate-bounce" />
+            </div>
+            <h3 className="text-xl font-bold">Відпустіть файл .json тут</h3>
+            <p className="text-sm text-emerald-200 mt-1 max-w-sm text-center">
+              Дані буде негайно імпортовано та синхронізовано з базою даних і сервером
+            </p>
+          </div>
+        )}
         {/* Left Sticky Chronological Timeline Ruler */}
         {showTimeline && (
           <TimelineRuler
@@ -4491,6 +4388,25 @@ export default function App() {
           onClose={() => setIsExportModalOpen(false)}
           onExportPng={handleExportPng}
           onExportSvg={handleExportSvg}
+          isAdmin={isAdmin}
+          onOpenImport={() => {
+            setDraggedJsonFile(null);
+            setIsImportModalOpen(true);
+          }}
+        />
+      )}
+
+      {/* Admin JSON Import & Immediate Sync Modal */}
+      {isImportModalOpen && (
+        <ImportJsonModal
+          isOpen={isImportModalOpen}
+          onClose={() => {
+            setIsImportModalOpen(false);
+            setDraggedJsonFile(null);
+          }}
+          onImportTree={handleImportTreeFromJson}
+          currentTreeTitle={tree.title || (isMainTree ? 'Головне дерево' : 'Родове полотно')}
+          initialFile={draggedJsonFile}
         />
       )}
 
